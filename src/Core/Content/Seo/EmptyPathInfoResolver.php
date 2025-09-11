@@ -27,11 +27,19 @@ class EmptyPathInfoResolver extends AbstractSeoResolver
      */
     public function resolve(string $languageId, string $salesChannelId, string $pathInfo): array
     {
+        return $this->resolveWithQueryString($languageId, $salesChannelId, $pathInfo, null);
+    }
+
+    /**
+     * @return ResolvedSeoUrl
+     */
+    public function resolveWithQueryString(string $languageId, string $salesChannelId, string $pathInfo, ?string $queryString): array
+    {
         $seoPathInfo = ltrim($pathInfo, '/');
         if ($seoPathInfo === '') {
             return ['pathInfo' => '/', 'isCanonical' => false];
         }
 
-        return $this->getDecorated()->resolve($languageId, $salesChannelId, $pathInfo);
+        return $this->getDecorated()->resolveWithQueryString($languageId, $salesChannelId, $pathInfo, $queryString);
     }
 }

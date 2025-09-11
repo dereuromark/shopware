@@ -336,6 +336,13 @@ class RequestTransformer implements RequestTransformerInterface
         // without leading slash, detail would be stripped
         $baseUrl = rtrim($baseUrl, '/') . '/';
 
+        // Include query string in resolving so SEO URLs stored with query parameters
+        // (e.g., "awesome-product?test=123") are matched exactly when present.
+        $queryString = $request->getQueryString();
+        if ($queryString === null || $queryString === '') {
+            $queryString = null;
+        }
+
         if ($this->equalsBaseUrl($seoPathInfo, $baseUrl)) {
             $seoPathInfo = '';
         } elseif ($this->containsBaseUrl($seoPathInfo, $baseUrl)) {
@@ -360,7 +367,7 @@ class RequestTransformer implements RequestTransformerInterface
             $seoPathInfo = mb_substr($seoPathInfo, mb_strlen($scriptName));
         }
 
-        $resolved = $this->resolver->resolve($languageId, $salesChannelId, $seoPathInfo);
+        $resolved = $this->resolver->resolveWithQueryString($languageId, $salesChannelId, $seoPathInfo, $queryString);
 
         $resolved['pathInfo'] = '/' . ltrim($resolved['pathInfo'], '/');
 

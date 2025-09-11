@@ -135,6 +135,113 @@ class SeoResolverTest extends TestCase
         static::assertTrue((bool) $resolvedSeoUrl['isCanonical']);
     }
 
+    public function testResolveWithQueryStringReturnsCanonical(): void
+    {
+        $salesChannelId = Uuid::randomHex();
+        $expectedPathInfo = '/detail/12345';
+
+        $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, true, $expectedPathInfo));
+
+        $resolvedSeoUrl = $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001', 'test=123');
+
+        static::assertSame($expectedPathInfo, $resolvedSeoUrl['pathInfo']);
+        static::assertTrue((bool) $resolvedSeoUrl['isCanonical']);
+    }
+
+    public function testResolveWithoutQueryStringPrefersPlainCanonical(): void
+    {
+        $salesChannelId = Uuid::randomHex();
+
+        $connection = $this->createMock(Connection::class);
+        $firstResult = FakeResultFactory::createResult([
+            [
+                'id' => Uuid::randomHex(),
+                'salesChannelId' => $salesChannelId,
+                'isCanonical' => true,
+                'pathInfo' => '/detail/plain',
+                'seoPathInfo' => 'Main-product/SWDEMO10001',
+            ],
+            [
+                'id' => Uuid::randomHex(),
+                'salesChannelId' => $salesChannelId,
+                'isCanonical' => true,
+                'pathInfo' => '/detail/query',
+                'seoPathInfo' => 'Main-product/SWDEMO10001?test=123',
+            ],
+        ], $connection);
+        $secondResult = FakeResultFactory::createResult([], $connection);
+
+        $connection->method('executeQuery')->willReturn($firstResult, $secondResult);
+        $connection->method('getDatabasePlatform')->willReturn($this->createMock(AbstractPlatform::class));
+
+        $seoResolver = new SeoResolver($connection);
+
+        $resolved = $seoResolver->resolve(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001');
+
+        static::assertNotEmpty($resolved);
+
+        static::assertSame('/detail/plain', $resolved['pathInfo']);
+        static::assertArrayHasKey('seoPathInfo', $resolved);
+        static::assertSame('Main-product/SWDEMO10001', $resolved['seoPathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+    }
+
+    public function testResolveWithPlainCanonicalAndQueryStringDoesNotSetCanonicalPathInfo(): void
+    {
+        $salesChannelId = Uuid::randomHex();
+
+        $connection = $this->createMock(Connection::class);
+        $firstResult = FakeResultFactory::createResult([
+            [
+                'id' => Uuid::randomHex(),
+                'salesChannelId' => $salesChannelId,
+                'isCanonical' => true,
+                'pathInfo' => '/detail/plain',
+                'seoPathInfo' => 'Main-product/SWDEMO10001',
+            ],
+        ], $connection);
+        $secondResult = FakeResultFactory::createResult([], $connection);
+
+        $connection->method('executeQuery')->willReturn($firstResult, $secondResult);
+        $connection->method('getDatabasePlatform')->willReturn($this->createMock(AbstractPlatform::class));
+
+        $seoResolver = new SeoResolver($connection);
+
+        $resolved = $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001', 'utm=123');
+
+        static::assertSame('/detail/plain', $resolved['pathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
+
+    public function testResolveWithFlagQueryStringDoesNotSetCanonicalPathInfo(): void
+    {
+        $salesChannelId = Uuid::randomHex();
+
+        $connection = $this->createMock(Connection::class);
+        $firstResult = FakeResultFactory::createResult([
+            [
+                'id' => Uuid::randomHex(),
+                'salesChannelId' => $salesChannelId,
+                'isCanonical' => true,
+                'pathInfo' => '/detail/flag',
+                'seoPathInfo' => 'Latest-Product/SW10005?test12345',
+            ],
+        ], $connection);
+        $secondResult = FakeResultFactory::createResult([], $connection);
+
+        $connection->method('executeQuery')->willReturn($firstResult, $secondResult);
+        $connection->method('getDatabasePlatform')->willReturn($this->createMock(AbstractPlatform::class));
+
+        $seoResolver = new SeoResolver($connection);
+
+        $resolved = $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, 'Latest-Product/SW10005', 'test12345=');
+
+        static::assertSame('/detail/flag', $resolved['pathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
+
     private function getMockConnection(string $salesChannelId, bool $isCanonical, string $pathInfo): Connection&MockObject
     {
         $mock = $this->createMock(Connection::class);

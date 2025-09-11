@@ -305,4 +305,197 @@ class SeoResolverTest extends TestCase
         $salesChannelResponse = $this->seoResolver->resolve(Defaults::LANGUAGE_SYSTEM, Uuid::randomHex(), 'awesome-product');
         static::assertSame('/default', $salesChannelResponse['pathInfo']);
     }
+
+    public function testResolveSeoPathWithCanonicalContainingQueryString(): void
+    {
+        $context = Context::createDefaultContext();
+        $salesChannelId = Uuid::randomHex();
+        $this->createStorefrontSalesChannelContext($salesChannelId, 'test');
+
+        $this->seoUrlRepository->create([
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/12345',
+                'seoPathInfo' => 'Main-product/SWDEMO10001?test=123',
+                'isCanonical' => true,
+            ],
+        ], $context);
+
+        $resolved = $this->seoResolver->resolveWithQueryString($context->getLanguageId(), $salesChannelId, 'Main-product/SWDEMO10001', 'test=123');
+
+        static::assertSame('/detail/12345', $resolved['pathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
+
+    public function testResolveSeoPathWithDifferentQueryStringDoesNotMatchCanonicalQuery(): void
+    {
+        $context = Context::createDefaultContext();
+        $salesChannelId = Uuid::randomHex();
+        $this->createStorefrontSalesChannelContext($salesChannelId, 'test');
+
+        $this->seoUrlRepository->create([
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/12345',
+                'seoPathInfo' => 'Main-product/SWDEMO10001?test=123',
+                'isCanonical' => true,
+            ],
+        ], $context);
+
+        $resolved = $this->seoResolver->resolveWithQueryString(
+            $context->getLanguageId(),
+            $salesChannelId,
+            'Main-product/SWDEMO10001',
+            'test=12334'
+        );
+
+        static::assertSame('/Main-product/SWDEMO10001', $resolved['pathInfo']);
+        static::assertFalse((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
+
+    public function testResolveSeoPathWithQueryStringPrefersExactVariantMatch(): void
+    {
+        $context = Context::createDefaultContext();
+        $salesChannelId = Uuid::randomHex();
+        $this->createStorefrontSalesChannelContext($salesChannelId, 'test');
+
+        $this->seoUrlRepository->create([
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/base',
+                'seoPathInfo' => 'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65',
+                'isCanonical' => true,
+            ],
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/variant-b',
+                'seoPathInfo' => 'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65?test=5.2',
+                'isCanonical' => true,
+            ],
+        ], $context);
+
+        $resolved = $this->seoResolver->resolveWithQueryString(
+            $context->getLanguageId(),
+            $salesChannelId,
+            'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65',
+            'test=5.2'
+        );
+
+        static::assertSame('/detail/variant-b', $resolved['pathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
+
+    public function testResolveSeoPathWithDifferentQueryValueFallsBackToPlainCanonical(): void
+    {
+        $context = Context::createDefaultContext();
+        $salesChannelId = Uuid::randomHex();
+        $this->createStorefrontSalesChannelContext($salesChannelId, 'test');
+
+        $this->seoUrlRepository->create([
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/base',
+                'seoPathInfo' => 'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65',
+                'isCanonical' => true,
+            ],
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/variant-54',
+                'seoPathInfo' => 'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65?test=5.4',
+                'isCanonical' => true,
+            ],
+        ], $context);
+
+        $resolved = $this->seoResolver->resolveWithQueryString(
+            $context->getLanguageId(),
+            $salesChannelId,
+            'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65',
+            'test=5.42'
+        );
+
+        static::assertSame('/detail/base', $resolved['pathInfo']);
+        static::assertArrayHasKey('seoPathInfo', $resolved);
+        static::assertSame('Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65', $resolved['seoPathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
+
+    public function testResolveSeoPathWithExtraRequestQueryUsesVariantFallback(): void
+    {
+        $context = Context::createDefaultContext();
+        $salesChannelId = Uuid::randomHex();
+        $this->createStorefrontSalesChannelContext($salesChannelId, 'test');
+
+        $this->seoUrlRepository->create([
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/variant-54',
+                'seoPathInfo' => 'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65?test=5.4',
+                'isCanonical' => true,
+            ],
+        ], $context);
+
+        $resolved = $this->seoResolver->resolveWithQueryString(
+            $context->getLanguageId(),
+            $salesChannelId,
+            'Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65',
+            'test=5.4&acv=1'
+        );
+
+        static::assertSame('/detail/variant-54', $resolved['pathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayHasKey('canonicalPathInfo', $resolved);
+        static::assertSame('/Aerodynamic-Aluminum-Chin-Up/SW-019d22fd316872bb96162ee6016a6c65?test=5.4', $resolved['canonicalPathInfo']);
+    }
+
+    public function testResolveWithoutQueryPrefersPlainCanonicalOverQueryVariant(): void
+    {
+        $context = Context::createDefaultContext();
+        $salesChannelId = Uuid::randomHex();
+        $this->createStorefrontSalesChannelContext($salesChannelId, 'test');
+
+        $this->seoUrlRepository->create([
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/query',
+                'seoPathInfo' => 'Main-product/SWDEMO10001?test=123',
+                'isCanonical' => true,
+            ],
+            [
+                'salesChannelId' => $salesChannelId,
+                'languageId' => Defaults::LANGUAGE_SYSTEM,
+                'routeName' => 'r',
+                'pathInfo' => '/detail/plain',
+                'seoPathInfo' => 'Main-product/SWDEMO10001',
+                'isCanonical' => true,
+            ],
+        ], $context);
+
+        $resolved = $this->seoResolver->resolve($context->getLanguageId(), $salesChannelId, 'Main-product/SWDEMO10001');
+
+        static::assertSame('/detail/plain', $resolved['pathInfo']);
+        static::assertArrayHasKey('seoPathInfo', $resolved);
+        static::assertSame('Main-product/SWDEMO10001', $resolved['seoPathInfo']);
+        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+    }
 }
