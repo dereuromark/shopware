@@ -45,14 +45,14 @@ agent) investigating "why did *this* product rank above *that one* for the term 
 │      withExact       → adds .exact subfield (whitespace, no     │
 │                        norms) for high-boost literal-token hits │
 │      technicalTerms  → routes .search through the               │
-│                        word_delimiter_graph analyzer chain      │
+│                        technical-term analyzer chain            │
 │      lengthNorm      → applies sw_length_norm BM25 to .search   │
 │                        for fields where doc length is signal    │
 ├─────────────────────────────────────────────────────────────────┤
 │  Analyzer chains                                                │
 │    sw_whitespace_analyzer       — lowercase, no splitting       │
 │    sw_{english,german}_analyzer — language stemmer + stopwords  │
-│    sw_*_word_delimiter_*        — word_delimiter_graph chain    │
+│    sw_*_technical_term_*        — word_delimiter_graph chain    │
 │    sw_ngram_analyzer            — ngram filter (3-grams default)│
 ├─────────────────────────────────────────────────────────────────┤
 │  BM25                                                           │
@@ -73,7 +73,7 @@ ES definition (Product, Category, etc.) composes its mapping from:
 | `BOOLEAN_FIELD`, `INT_FIELD`, `FLOAT_FIELD` | scalar mappings | Self-explanatory |
 | `SEARCH_FIELD` | `.search` (whitespace) + `.ngram` subfields | Default for searchable text |
 | `SEARCH_FIELD_WITH_EXACT` | adds `.exact` (whitespace, `norms: false`) on top of `SEARCH_FIELD` | Identifier fields where the literal token must win the high-boost lane |
-| `TECHNICAL_TERM_SEARCH_FIELD` | `.search` via `sw_*_word_delimiter_*` instead of plain whitespace | SKU-style fields where `BC1010` ↔ `BC 1010`, `M8x20`, `5,5` need to map onto each other |
+| `TECHNICAL_TERM_SEARCH_FIELD` | `.search` via `sw_*_technical_term_*` instead of plain whitespace | SKU-style fields where `BC1010` ↔ `BC 1010`, `M8x20`, `5,5` need to map onto each other |
 | `buildTextFieldConfig(withExact?, technicalTerms?, lengthNorm?)` | composable wrapper around the above; **preferred over the consts** | New mappings — keeps configuration declarative |
 
 The deprecated `getTextFieldConfig()` (no flags) remains as `KEYWORD_FIELD + SEARCH_FIELD` for plugins that decorated `AbstractElasticsearchDefinition`. New code uses `buildTextFieldConfig()` exclusively.
@@ -113,13 +113,13 @@ filter:    [lowercase, sw_{lang}_stop_filter]
 
 Translated language sub-fields under translated text fields (`name.lang_en.search`, `name.lang_de.search`, …). They drop stopwords for the active language. No stemming today; we may add it but it's a separate decision.
 
-### 3.3 Technical-term — `sw_{lang|whitespace}_word_delimiter_{index|search}_analyzer`
+### 3.3 Technical-term — `sw_{lang|whitespace}_technical_term_{index|search}_analyzer`
 
 Used by `name`, `productNumber`, `ean`, `manufacturerNumber`, `customSearchKeywords` (when `technicalTerms: true`). The chain is asymmetric on purpose:
 
 ```
-index:   [char_filter*] → word_delimiter_graph → flatten_graph → lowercase → sw_length_min → remove_duplicates → [stop] → sw_shingle_filter
-search:  [char_filter*] → word_delimiter_graph                 → lowercase → sw_length_min → remove_duplicates → [stop] → sw_shingle_filter → sw_unique_filter
+index:   [char_filter*] → word_delimiter_graph → flatten_graph → lowercase → sw_length_min → sw_decimal_normalize_token → remove_duplicates → [stop]
+search:  [char_filter*] → word_delimiter_graph                 → lowercase → sw_length_min → sw_decimal_normalize_token → remove_duplicates → [stop] → sw_unique_filter
 ```
 
 `[char_filter*]` is the locale-and-feature-driven char_filter list described in §3.3.2.
@@ -130,12 +130,15 @@ search:  [char_filter*] → word_delimiter_graph                 → lowercase �
 ```yaml
 type: word_delimiter_graph
 preserve_original: true     # keep `BC-1010-XL` as-is
-catenate_all: true          # also emit `BC1010XL`
-catenate_words: true        # …`BCXL` if there were repeated word parts
+catenate_all: true          # also emit `BC1010XL` (joins every sub-part)
+catenate_words: true        # …`BCXL` (joins consecutive word sub-parts)
+catenate_numbers: true      # …`33` from `3.3` (joins consecutive number sub-parts)
 split_on_case_change: true  # `LaserJet` → laser, jet (helps brand search)
 generate_word_parts: true   # `BC-1010-XL` → BC, 1010, XL
 split_on_numerics: true     # `BC1010` → BC, 1010
 ```
+
+`catenate_numbers` only triggers when an input token has multiple numeric sub-parts separated by non-alphanumeric characters — typically a `sw_unit_glue` output like `3.3mm` (sub-parts `3`, `3`, `mm`) where `catenate_numbers` recovers the standalone `33`. Hex / SKU content (`FF0000`, `BC-1010-XL`) usually has at most one numeric run so this flag is a no-op there.
 
 #### 3.3.2 Pre-tokenization char_filters
 
@@ -143,14 +146,17 @@ Char_filters operate on the raw string before the whitespace tokenizer; they nor
 
 | Filter | Pattern → replacement | Wired into | Toggle |
 |---|---|---|---|
-| `sw_decimal_normalize` | `(\d),(\d)` → `$1.$2` | `sw_german_word_delimiter_{index,search}_analyzer` only | always on (locale correctness — `,` is the German decimal separator; never wired into English / locale-agnostic chains where `,` is the thousands separator) |
+| `sw_decimal_normalize` | `(\d),(\d)` → `$1.$2` | `sw_german_technical_term_{index,search}_analyzer` only | always on (locale correctness — `,` is the German decimal separator; never wired into English / locale-agnostic chains where `,` is the thousands separator) |
 | `sw_dimension_normalize` | `(\d)\s*[xX×]\s*(\d)` → `$1x$2` | all six technical-term analyzers (whitespace + en + de × index/search) | env-gated, off by default — `SHOPWARE_ES_DIMENSION_NORMALIZE=1` enables; toggling requires reindex; injection happens in `IndexCreator` so the bundled YAML stays a single canonical settings document |
+| `sw_unit_glue` | `(^\|\s)(\d+(?:[./,'-]\d+)*)\s+([^\d\s])` → `$1$2$3` | all six technical-term analyzers | always on; bridges a *complete numeric run* followed by a unit/symbol token. Covers `100 ml` ↔ `100ml`, `3.3 mm` ↔ `3.3mm`, `5 €` ↔ `5€`, `64 GB` ↔ `64GB`, `100 °C` ↔ `100°C`, `1,000 kg` ↔ `1,000kg`, `1'200 km` ↔ `1'200km` (Swiss thousands), `1/2 inch` ↔ `1/2inch` (fractions), `5-10 mm` ↔ `5-10mm` (ranges). Three structural guards: `(^\|\s)` requires the numeric run to start at a word boundary so embedded digits (the `49` in `Gr49`) don't trigger glue; `[./,'-]` between digit groups admits decimal / thousands / fraction / range separators without admitting arbitrary punctuation; `[^\d\s]` second capture excludes digits so `Pack 5 of 10` is not glued. After this filter, `word_delimiter_graph` re-splits the merged form via `split_on_numerics` and re-joins via `catenate_all`, so both the glued and split forms end up in the inverted index. Literal-form queries are independently served by `.exact` (whitespace-only analyzer), which sees the verbatim tokens regardless of what this filter does to `.search`. |
 
 #### 3.3.3 Cleanup and convergence filters
 
 - `sw_length_min { type: length, min: 2 }` — drops single-character noise tokens like the `i` in `iPhone` after case-split, the `c` and `a` from `…c55a…` in a UUID, etc.
+- `sw_decimal_normalize_token { type: pattern_capture, preserve_original: true, patterns: ['(\d+)\.0+(?=\D|$)', '(\d+\.\d*[1-9])0+(?=\D|$)'] }` — emits canonical trailing-zero-stripped forms as additional sibling tokens alongside the originals. Two patterns: the first (`(\d+)\.0+`) handles pure-zero fractions (`5.0 ↔ 5.00 ↔ 5.000` all emit `5`); the second (`(\d+\.\d*[1-9])0+`) handles non-zero fractions with trailing zeros (`3.30 → 3.3`, `5.150 → 5.15`, `1.0500 → 1.05`). Operates on `word_delimiter_graph` output including welded forms, so `5.0mm → 5` and `3.30mm → 3.3` both work. Positioned **after** `sw_length_min` so single-digit captures aren't reaped by the length floor (which only applies to the filter's input, not its output). `preserve_original: true` keeps glued/verbatim tokens intact. Doesn't trigger on fractions without trailing zeros (`5.5`, `5.15`), integers (`100mm`), or hex/SKU content (no `\.`) — distinct numeric values keep distinct canonical tokens, so discrimination is preserved.
 - `sw_unique_filter { type: unique, only_on_same_position: false }` — **search side only.** De-duplicates cross-position duplicate tokens in the *query* so `bohrcraft bohrcraft` doesn't double-weight `bohrcraft` against any matching doc. Index side keeps positional fidelity for any future phrase / proximity query.
-- `sw_shingle_filter { type: shingle, min/max=2, output_unigrams: true, token_separator: "" }` — bigram concatenation shingle on **both** sides. Bridges the gap `word_delimiter_graph` alone leaves: glued forms (`100ml`) split to `[100, ml, 100ml]` via `catenate_all` + `preserve_original`, but the reverse direction (`100 ml` → `100ml`) needs a separate mechanism. With `output_unigrams: true` the originals are kept, so non-shingled queries still match.
+
+The "bridge the whitespace gap" job (`100 ml` ↔ `100ml`, `3.3 mm` ↔ `3.3mm`) lives entirely in §3.3.2's `sw_unit_glue` char_filter — running before tokenization rather than as a token-level shingle. A shingle filter was tried briefly (operating on adjacent unigrams via `min/max=2`, `token_separator=""`) but produced index bloat from non-numeric pairs (`BohrcraftDIN`) and interacted badly with `word_delimiter_graph` graph alternates; the char_filter approach replaces it with one targeted regex.
 
 ### 3.4 N-gram — `sw_ngram_analyzer`
 
@@ -259,7 +265,7 @@ When a query produces a surprising ranking, walk this checklist before diving in
 ```bash
 # Search-side tokens for the user's query
 curl -s -X POST "${OPENSEARCH_URL}/${INDEX}/_analyze" -H 'content-type: application/json' -d '{
-    "analyzer": "sw_german_word_delimiter_search_analyzer",
+    "analyzer": "sw_german_technical_term_search_analyzer",
     "text": "5,5"
 }' | jq '.tokens[].token'
 ```

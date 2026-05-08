@@ -1680,6 +1680,35 @@ ADMIN_OPENSEARCH_URL=http://opensearch.example.internal:9200
 
 If you need failover or load distribution across multiple OpenSearch nodes, expose them through a single load-balanced endpoint and configure that endpoint in Shopware.
 
+## Renamed technical-term Elasticsearch analyzers
+
+The technical-term analyzer chains in the product index were renamed from
+`sw_*_word_delimiter_*_analyzer` to `sw_*_technical_term_*_analyzer` to match
+the public-facing terminology used by `TECHNICAL_TERM_SEARCH_FIELD` and
+`buildTextFieldConfig(technicalTerms: true)`. The chain composition is
+unchanged.
+
+Renamed:
+
+- `sw_whitespace_word_delimiter_index_analyzer` → `sw_whitespace_technical_term_index_analyzer`
+- `sw_whitespace_word_delimiter_search_analyzer` → `sw_whitespace_technical_term_search_analyzer`
+- `sw_english_word_delimiter_index_analyzer` → `sw_english_technical_term_index_analyzer`
+- `sw_english_word_delimiter_search_analyzer` → `sw_english_technical_term_search_analyzer`
+- `sw_german_word_delimiter_index_analyzer` → `sw_german_technical_term_index_analyzer`
+- `sw_german_word_delimiter_search_analyzer` → `sw_german_technical_term_search_analyzer`
+
+The constants `ElasticsearchFieldBuilder::ANALYZER_WHITESPACE_TECHNICAL_INDEX`
+and `ANALYZER_WHITESPACE_TECHNICAL_SEARCH` now hold the new analyzer names. The
+constant `AbstractElasticsearchDefinition::TECHNICAL_TERM_SEARCH_FIELD`
+references them indirectly via those constants and updates accordingly. Code
+using the constants (rather than hard-coded strings) continues to work; code
+that hard-coded the old analyzer name strings must be updated. A full
+Elasticsearch reindex is required after upgrade.
+
+If your plugin's index-time customization (`ElasticsearchIndexConfigSubscriber`
+or similar) references the old analyzer names, update those references — see
+`shopware/SwagCommercial`'s `DictionaryIndexConfigSubscriber` for an example.
+
 ## Changed default Elasticsearch shard and replica counts for Admin ES
 
 The default values for `SHOPWARE_ADMIN_ES_NUMBER_OF_SHARDS` and `SHOPWARE_ADMIN_ES_NUMBER_OF_REPLICAS` changed from `3` to empty (meaning Elasticsearch defaults are used). If you relied on the previous defaults, set these environment variables explicitly in your `.env` file:
