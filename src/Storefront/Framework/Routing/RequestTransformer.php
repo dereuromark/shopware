@@ -3,6 +3,7 @@
 namespace Shopware\Storefront\Framework\Routing;
 
 use Shopware\Core\Content\Seo\AbstractSeoResolver;
+use Shopware\Core\Content\Seo\SeoUrlRequestContext;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Routing\RequestTransformerInterface;
 use Shopware\Core\PlatformRequest;
@@ -12,7 +13,7 @@ use Symfony\Component\HttpFoundation\Request;
 
 /**
  * @phpstan-import-type Domain from AbstractDomainLoader
- * @phpstan-import-type ResolvedSeoUrl from AbstractSeoResolver
+ * @phpstan-import-type ResolvedSeoUrlArray from AbstractSeoResolver
  */
 #[Package('framework')]
 class RequestTransformer implements RequestTransformerInterface
@@ -324,7 +325,7 @@ class RequestTransformer implements RequestTransformerInterface
     }
 
     /**
-     * @return ResolvedSeoUrl
+     * @return ResolvedSeoUrlArray
      */
     private function resolveSeoUrl(Request $request, string $baseUrl, string $languageId, string $salesChannelId): array
     {
@@ -338,10 +339,7 @@ class RequestTransformer implements RequestTransformerInterface
 
         // Include query string in resolving so SEO URLs stored with query parameters
         // (e.g., "awesome-product?test=123") are matched exactly when present.
-        $queryString = $request->getQueryString();
-        if ($queryString === null || $queryString === '') {
-            $queryString = null;
-        }
+        $queryString = $request->getQueryString() ?: null;
 
         if ($this->equalsBaseUrl($seoPathInfo, $baseUrl)) {
             $seoPathInfo = '';
@@ -367,11 +365,17 @@ class RequestTransformer implements RequestTransformerInterface
             $seoPathInfo = mb_substr($seoPathInfo, mb_strlen($scriptName));
         }
 
-        $resolved = $this->resolver->resolveWithQueryString($languageId, $salesChannelId, $seoPathInfo, $queryString);
+        $resolved = $this->resolver->resolveUrl(new SeoUrlRequestContext(
+            languageId: $languageId,
+            salesChannelId: $salesChannelId,
+            pathInfo: $seoPathInfo,
+            queryString: $queryString,
+        ));
 
-        $resolved['pathInfo'] = '/' . ltrim($resolved['pathInfo'], '/');
+        $data = $resolved->toArray();
+        $data['pathInfo'] = '/' . ltrim($data['pathInfo'], '/');
 
-        return $resolved;
+        return $data;
     }
 
     private function getSchemeAndHttpHost(Request $request): string

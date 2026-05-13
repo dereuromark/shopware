@@ -2,10 +2,11 @@
 
 namespace Shopware\Core\Content\Seo;
 
+use Shopware\Core\Framework\Feature;
 use Shopware\Core\Framework\Log\Package;
 
 /**
- * @phpstan-import-type ResolvedSeoUrl from AbstractSeoResolver
+ * @phpstan-import-type ResolvedSeoUrlArray from AbstractSeoResolver
  */
 #[Package('inventory')]
 class EmptyPathInfoResolver extends AbstractSeoResolver
@@ -23,23 +24,31 @@ class EmptyPathInfoResolver extends AbstractSeoResolver
     }
 
     /**
-     * @return ResolvedSeoUrl
+     * @deprecated tag:v6.8.0 - will be removed in v6.8.0, use {@see resolveUrl()} instead
+     *
+     * @return ResolvedSeoUrlArray
      */
     public function resolve(string $languageId, string $salesChannelId, string $pathInfo): array
     {
-        return $this->resolveWithQueryString($languageId, $salesChannelId, $pathInfo, null);
+        Feature::triggerDeprecationOrThrow(
+            'v6.8.0.0',
+            Feature::deprecatedMethodMessage(self::class, __METHOD__, 'v6.8.0.0', self::class . '::resolveUrl()')
+        );
+
+        return $this->resolveUrl(new SeoUrlRequestContext(
+            languageId: $languageId,
+            salesChannelId: $salesChannelId,
+            pathInfo: $pathInfo,
+        ))->toArray();
     }
 
-    /**
-     * @return ResolvedSeoUrl
-     */
-    public function resolveWithQueryString(string $languageId, string $salesChannelId, string $pathInfo, ?string $queryString): array
+    public function resolveUrl(SeoUrlRequestContext $context): ResolvedSeoUrl
     {
-        $seoPathInfo = ltrim($pathInfo, '/');
+        $seoPathInfo = ltrim($context->pathInfo, '/');
         if ($seoPathInfo === '') {
-            return ['pathInfo' => '/', 'isCanonical' => false];
+            return new ResolvedSeoUrl(pathInfo: '/', isCanonical: false);
         }
 
-        return $this->getDecorated()->resolveWithQueryString($languageId, $salesChannelId, $pathInfo, $queryString);
+        return $this->getDecorated()->resolveUrl($context);
     }
 }

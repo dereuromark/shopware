@@ -104,6 +104,38 @@ class CanonicalRedirectServiceTest extends TestCase
         static::assertSame('/lorem/ipsum/dolor-sit/amet?foo=bar', $response->getTargetUrl());
     }
 
+    public function testCanonicalWithExistingQueryStringPreservesStoredQuery(): void
+    {
+        $request = self::getRequest([SalesChannelRequest::ATTRIBUTE_CANONICAL_LINK => '/awesome-product?lang=en']);
+        $request->server->set('QUERY_STRING', 'test=123');
+
+        $canonicalRedirectService = new CanonicalRedirectService(
+            $this->getSystemConfigService(true),
+            new ExtensionDispatcher(new EventDispatcher()),
+        );
+
+        $response = $canonicalRedirectService->getRedirect($request);
+
+        static::assertInstanceOf(RedirectResponse::class, $response);
+        static::assertSame('/awesome-product?lang=en', $response->getTargetUrl());
+    }
+
+    public function testCanonicalWithoutQueryStringAppendsRequestQuery(): void
+    {
+        $request = self::getRequest([SalesChannelRequest::ATTRIBUTE_CANONICAL_LINK => '/awesome-product']);
+        $request->server->set('QUERY_STRING', 'test=123');
+
+        $canonicalRedirectService = new CanonicalRedirectService(
+            $this->getSystemConfigService(true),
+            new ExtensionDispatcher(new EventDispatcher()),
+        );
+
+        $response = $canonicalRedirectService->getRedirect($request);
+
+        static::assertInstanceOf(RedirectResponse::class, $response);
+        static::assertSame('/awesome-product?test=123', $response->getTargetUrl());
+    }
+
     public function testExtensionIsDispatched(): void
     {
         $request = self::getRequest([SalesChannelRequest::ATTRIBUTE_CANONICAL_LINK => '/lorem/ipsum/dolor-sit/amet']);

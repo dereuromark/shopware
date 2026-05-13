@@ -4,13 +4,14 @@ namespace Shopware\Core\Content\Seo;
 
 use Doctrine\DBAL\Connection;
 use Shopware\Core\Framework\DataAbstractionLayer\Dbal\QueryBuilder;
+use Shopware\Core\Framework\Feature;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Plugin\Exception\DecorationPatternException;
 use Shopware\Core\Framework\Uuid\Uuid;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * @phpstan-import-type ResolvedSeoUrl from AbstractSeoResolver
+ * @phpstan-import-type ResolvedSeoUrlArray from AbstractSeoResolver
  */
 #[Package('inventory')]
 class SeoResolver extends AbstractSeoResolver
@@ -28,20 +29,24 @@ class SeoResolver extends AbstractSeoResolver
     }
 
     /**
-     * @return ResolvedSeoUrl
+     * @deprecated tag:v6.8.0 - will be removed in v6.8.0, use {@see resolveUrl()} instead
+     *
+     * @return ResolvedSeoUrlArray
      */
     public function resolve(string $languageId, string $salesChannelId, string $pathInfo): array
     {
-        return $this->resolveWithQueryString($languageId, $salesChannelId, $pathInfo, null);
+        Feature::triggerDeprecationOrThrow(
+            'v6.8.0.0',
+            Feature::deprecatedMethodMessage(self::class, __METHOD__, 'v6.8.0.0', self::class . '::resolveUrl()')
+        );
+
+        return $this->resolveUrl(new SeoUrlRequestContext($languageId, $salesChannelId, $pathInfo))->toArray();
     }
 
-    /**
-     * @return ResolvedSeoUrl
-     */
-    public function resolveWithQueryString(string $languageId, string $salesChannelId, string $pathInfo, ?string $queryString): array
+    public function resolveUrl(SeoUrlRequestContext $context): ResolvedSeoUrl
     {
-        $seoPathInfo = trim($pathInfo, '/');
-        $normalizedQueryString = self::normalizeQueryString($queryString);
+        $seoPathInfo = trim($context->pathInfo, '/');
+        $normalizedQueryString = self::normalizeQueryString($context->queryString);
 
         $query = (new QueryBuilder($this->connection))
             ->select('id', 'path_info pathInfo', 'seo_path_info seoPathInfo', 'is_canonical isCanonical', 'sales_channel_id salesChannelId')
@@ -55,54 +60,24 @@ class SeoResolver extends AbstractSeoResolver
             'seo_path_info = :seoPathWithSlash',
         ];
 
-        $query->setParameter('language_id', Uuid::fromHexToBytes($languageId))
-            ->setParameter('sales_channel_id', Uuid::fromHexToBytes($salesChannelId))
+        $query->setParameter('language_id', Uuid::fromHexToBytes($context->languageId))
+            ->setParameter('sales_channel_id', Uuid::fromHexToBytes($context->salesChannelId))
             ->setParameter('seoPath', $seoPathInfo)
             ->setParameter('seoPathWithSlash', $seoPathInfo . '/');
 
         if ($normalizedQueryString !== null) {
             $seoPathConditions[] = 'seo_path_info = :seoPathWithQuery';
             $seoPathConditions[] = 'seo_path_info = :seoPathWithSlashAndQuery';
-            $seoPathConditions[] = 'seo_path_info LIKE :seoPathLikeQuery';
-            $seoPathConditions[] = 'seo_path_info LIKE :seoPathWithSlashLikeQuery';
             $query->setParameter('seoPathWithQuery', $seoPathInfo . '?' . $normalizedQueryString)
-                ->setParameter('seoPathWithSlashAndQuery', $seoPathInfo . '/?' . $normalizedQueryString)
-                ->setParameter('seoPathLikeQuery', $seoPathInfo . '?%')
-                ->setParameter('seoPathWithSlashLikeQuery', $seoPathInfo . '/?%');
+                ->setParameter('seoPathWithSlashAndQuery', $seoPathInfo . '/?' . $normalizedQueryString);
         }
 
         $query->andWhere('(' . implode(' OR ', $seoPathConditions) . ')');
-
         $query->setTitle('seo-url::resolve');
 
         $seoPaths = $query->executeQuery()->fetchAllAssociative();
-        $requestQueryParams = null;
-        if ($normalizedQueryString !== null) {
-            $requestQueryParams = self::parseQueryParameters($normalizedQueryString);
 
-            $seoPaths = array_values(array_filter($seoPaths, static function (array $seoPath) use ($seoPathInfo, $normalizedQueryString, $requestQueryParams): bool {
-                [$priority] = self::calculateQueryMatch($seoPathInfo, $normalizedQueryString, $requestQueryParams, (string) ($seoPath['seoPathInfo'] ?? ''));
-
-                return $priority > 0;
-            }));
-        }
-
-        // Prefer exact query-string matches first, then controlled query fallback matches,
-        // then plain path matches. Afterwards sort by canonical and sales-channel specificity.
-        usort($seoPaths, static function ($a, $b) use ($seoPathInfo, $normalizedQueryString, $requestQueryParams) {
-            if ($normalizedQueryString !== null && $requestQueryParams !== null) {
-                [$aPriority, $aSpecificity] = self::calculateQueryMatch($seoPathInfo, $normalizedQueryString, $requestQueryParams, (string) ($a['seoPathInfo'] ?? ''));
-                [$bPriority, $bSpecificity] = self::calculateQueryMatch($seoPathInfo, $normalizedQueryString, $requestQueryParams, (string) ($b['seoPathInfo'] ?? ''));
-
-                if ($aPriority !== $bPriority) {
-                    return $bPriority <=> $aPriority;
-                }
-
-                if ($aSpecificity !== $bSpecificity) {
-                    return $bSpecificity <=> $aSpecificity;
-                }
-            }
-
+        usort($seoPaths, static function ($a, $b) {
             if ($a['isCanonical'] === null) {
                 return 1;
             }
@@ -131,7 +106,7 @@ class SeoResolver extends AbstractSeoResolver
             }
         }
 
-        if ($normalizedQueryString !== null && $seoPath['isCanonical'] && isset($seoPath['seoPathInfo']) && \is_string($seoPath['seoPathInfo'])) {
+        if ($seoPath['isCanonical'] && isset($seoPath['seoPathInfo']) && \is_string($seoPath['seoPathInfo'])) {
             $storedQueryString = parse_url($seoPath['seoPathInfo'], \PHP_URL_QUERY);
             $normalizedStoredQueryString = self::normalizeQueryString(\is_string($storedQueryString) ? $storedQueryString : null);
 
@@ -150,8 +125,8 @@ class SeoResolver extends AbstractSeoResolver
                 ->andWhere('is_canonical = 1')
                 ->andWhere('is_deleted = 0')
                 ->setMaxResults(1)
-                ->setParameter('language_id', Uuid::fromHexToBytes($languageId))
-                ->setParameter('sales_channel_id', Uuid::fromHexToBytes($salesChannelId))
+                ->setParameter('language_id', Uuid::fromHexToBytes($context->languageId))
+                ->setParameter('sales_channel_id', Uuid::fromHexToBytes($context->salesChannelId))
                 ->setParameter('pathInfo', '/' . ltrim((string) $seoPath['pathInfo'], '/'));
 
             $query->setTitle('seo-url::resolve-fallback');
@@ -170,68 +145,7 @@ class SeoResolver extends AbstractSeoResolver
 
         $seoPath['pathInfo'] = '/' . ltrim((string) $seoPath['pathInfo'], '/');
 
-        return $seoPath;
-    }
-
-    /**
-     * @param array<string, mixed> $requestQueryParams
-     *
-     * @return array{int, int}
-     */
-    private static function calculateQueryMatch(string $seoPathInfo, string $queryString, array $requestQueryParams, string $storedSeoPathInfo): array
-    {
-        $storedQueryString = parse_url($storedSeoPathInfo, \PHP_URL_QUERY);
-        if (!\is_string($storedQueryString) || $storedQueryString === '') {
-            return [1, 0];
-        }
-
-        $normalizedStoredQueryString = self::normalizeQueryString($storedQueryString);
-        $storedPathInfo = trim((string) parse_url($storedSeoPathInfo, \PHP_URL_PATH), '/');
-
-        if ($normalizedStoredQueryString === $queryString && rtrim($storedPathInfo, '/') === rtrim($seoPathInfo, '/')) {
-            return [3, \strlen($normalizedStoredQueryString)];
-        }
-
-        $storedQueryParams = self::parseQueryParameters($storedQueryString);
-
-        $specificity = 0;
-        foreach ($storedQueryParams as $key => $storedValue) {
-            if (!\array_key_exists($key, $requestQueryParams)) {
-                return [0, 0];
-            }
-
-            $requestValue = $requestQueryParams[$key];
-            if (!\is_string($storedValue) || !\is_string($requestValue)) {
-                return [0, 0];
-            }
-
-            if ($storedValue !== $requestValue) {
-                return [0, 0];
-            }
-
-            $specificity += \strlen($storedValue);
-        }
-
-        return [2, $specificity];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private static function parseQueryParameters(string $queryString): array
-    {
-        parse_str($queryString, $rawQueryParams);
-
-        $queryParams = [];
-        foreach ($rawQueryParams as $key => $value) {
-            if (!\is_string($key)) {
-                continue;
-            }
-
-            $queryParams[$key] = $value;
-        }
-
-        return $queryParams;
+        return ResolvedSeoUrl::fromArray($seoPath);
     }
 
     private static function normalizeQueryString(?string $queryString): ?string

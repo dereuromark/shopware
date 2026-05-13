@@ -10,6 +10,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Shopware\Core\Content\Seo\SeoResolver;
+use Shopware\Core\Content\Seo\SeoUrlRequestContext;
+use Shopware\Core\Framework\Feature;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Uuid\Uuid;
 use Shopware\Core\Test\Stub\Doctrine\FakeResultFactory;
@@ -100,26 +102,25 @@ class SeoResolverTest extends TestCase
     }
 
     #[DataProvider('resolveDataProvider')]
-    public function testResolveWithIsCanonical(string $pathInfo, string $expected): void
+    public function testResolveUrlWithIsCanonical(string $pathInfo, string $expected): void
     {
         $salesChannelId = Uuid::randomHex();
         $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, true, $pathInfo));
 
-        $resolvedSeoUrl = $seoResolver->resolve(Uuid::randomHex(), $salesChannelId, $pathInfo);
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(Uuid::randomHex(), $salesChannelId, $pathInfo));
 
-        static::assertSame($expected, $resolvedSeoUrl['pathInfo']);
+        static::assertSame($expected, $resolved->pathInfo);
     }
 
     #[DataProvider('resolveCanonicalDataProvider')]
-    public function testResolveWithNotCanonical(string $pathInfo, string $expected): void
+    public function testResolveUrlWithNotCanonical(string $pathInfo, string $expected): void
     {
         $salesChannelId = Uuid::randomHex();
         $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, false, $pathInfo));
 
-        /** @var array{canonicalPathInfo: string, pathInfo: string, isCanonical: bool} $resolvedSeoUrl */
-        $resolvedSeoUrl = $seoResolver->resolve(Uuid::randomHex(), $salesChannelId, $pathInfo);
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(Uuid::randomHex(), $salesChannelId, $pathInfo));
 
-        static::assertSame($expected, $resolvedSeoUrl['canonicalPathInfo']);
+        static::assertSame($expected, $resolved->canonicalPathInfo);
     }
 
     public function testResolveIgnoresDeletedSeoUrls(): void
@@ -128,27 +129,31 @@ class SeoResolverTest extends TestCase
         $salesChannelId = Uuid::randomHex();
         $seoResolver = new SeoResolver($this->createSqliteConnectionWithDeletedSeoUrl($languageId, $salesChannelId));
 
-        /** @var array{pathInfo: string, isCanonical: bool|string} $resolvedSeoUrl */
-        $resolvedSeoUrl = $seoResolver->resolve($languageId, $salesChannelId, 'awesome-product');
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext($languageId, $salesChannelId, 'awesome-product'));
 
-        static::assertSame('/default', $resolvedSeoUrl['pathInfo']);
-        static::assertTrue((bool) $resolvedSeoUrl['isCanonical']);
+        static::assertSame('/default', $resolved->pathInfo);
+        static::assertTrue($resolved->isCanonical);
     }
 
-    public function testResolveWithQueryStringReturnsCanonical(): void
+    public function testResolveUrlWithQueryStringReturnsCanonical(): void
     {
         $salesChannelId = Uuid::randomHex();
         $expectedPathInfo = '/detail/12345';
 
         $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, true, $expectedPathInfo));
 
-        $resolvedSeoUrl = $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001', 'test=123');
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(
+            Uuid::randomHex(),
+            $salesChannelId,
+            'Main-product/SWDEMO10001',
+            'test=123',
+        ));
 
-        static::assertSame($expectedPathInfo, $resolvedSeoUrl['pathInfo']);
-        static::assertTrue((bool) $resolvedSeoUrl['isCanonical']);
+        static::assertSame($expectedPathInfo, $resolved->pathInfo);
+        static::assertTrue($resolved->isCanonical);
     }
 
-    public function testResolveWithoutQueryStringPrefersPlainCanonical(): void
+    public function testResolveUrlWithoutQueryStringPrefersPlainCanonical(): void
     {
         $salesChannelId = Uuid::randomHex();
 
@@ -176,17 +181,14 @@ class SeoResolverTest extends TestCase
 
         $seoResolver = new SeoResolver($connection);
 
-        $resolved = $seoResolver->resolve(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001');
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001'));
 
-        static::assertNotEmpty($resolved);
-
-        static::assertSame('/detail/plain', $resolved['pathInfo']);
-        static::assertArrayHasKey('seoPathInfo', $resolved);
-        static::assertSame('Main-product/SWDEMO10001', $resolved['seoPathInfo']);
-        static::assertTrue((bool) $resolved['isCanonical']);
+        static::assertSame('/detail/plain', $resolved->pathInfo);
+        static::assertSame('Main-product/SWDEMO10001', $resolved->seoPathInfo);
+        static::assertTrue($resolved->isCanonical);
     }
 
-    public function testResolveWithPlainCanonicalAndQueryStringDoesNotSetCanonicalPathInfo(): void
+    public function testResolveUrlWithPlainCanonicalAndQueryStringDoesNotSetCanonicalPathInfo(): void
     {
         $salesChannelId = Uuid::randomHex();
 
@@ -207,14 +209,19 @@ class SeoResolverTest extends TestCase
 
         $seoResolver = new SeoResolver($connection);
 
-        $resolved = $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, 'Main-product/SWDEMO10001', 'utm=123');
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(
+            Uuid::randomHex(),
+            $salesChannelId,
+            'Main-product/SWDEMO10001',
+            'utm=123',
+        ));
 
-        static::assertSame('/detail/plain', $resolved['pathInfo']);
-        static::assertTrue((bool) $resolved['isCanonical']);
-        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+        static::assertSame('/detail/plain', $resolved->pathInfo);
+        static::assertTrue($resolved->isCanonical);
+        static::assertNull($resolved->canonicalPathInfo);
     }
 
-    public function testResolveWithFlagQueryStringDoesNotSetCanonicalPathInfo(): void
+    public function testResolveUrlWithFlagQueryStringDoesNotSetCanonicalPathInfo(): void
     {
         $salesChannelId = Uuid::randomHex();
 
@@ -235,11 +242,67 @@ class SeoResolverTest extends TestCase
 
         $seoResolver = new SeoResolver($connection);
 
-        $resolved = $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, 'Latest-Product/SW10005', 'test12345=');
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(
+            Uuid::randomHex(),
+            $salesChannelId,
+            'Latest-Product/SW10005',
+            'test12345=',
+        ));
 
-        static::assertSame('/detail/flag', $resolved['pathInfo']);
-        static::assertTrue((bool) $resolved['isCanonical']);
-        static::assertArrayNotHasKey('canonicalPathInfo', $resolved);
+        static::assertSame('/detail/flag', $resolved->pathInfo);
+        static::assertTrue($resolved->isCanonical);
+        static::assertNull($resolved->canonicalPathInfo);
+    }
+
+    public function testResolveUrlExactQueryMatchOnly(): void
+    {
+        $salesChannelId = Uuid::randomHex();
+
+        // Mock returns no rows: with exact-match-only resolution, a stored URL with
+        // a different query (or query superset) would not be found by SQL — so the
+        // resolver falls back to plain path resolution.
+        $connection = $this->createMock(Connection::class);
+        $emptyResult = FakeResultFactory::createResult([], $connection);
+        $connection->method('executeQuery')->willReturn($emptyResult, $emptyResult);
+        $connection->method('getDatabasePlatform')->willReturn($this->createMock(AbstractPlatform::class));
+
+        $seoResolver = new SeoResolver($connection);
+
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(
+            Uuid::randomHex(),
+            $salesChannelId,
+            'product-a',
+            'promo=summer&utm=fb',
+        ));
+
+        static::assertSame('/product-a', $resolved->pathInfo);
+        static::assertFalse($resolved->isCanonical);
+    }
+
+    public function testResolveThrowsWhenFeatureActive(): void
+    {
+        if (!Feature::isActive('v6.8.0.0')) {
+            static::markTestSkipped('Feature v6.8.0.0 must be active to assert the throw behaviour.');
+        }
+
+        $salesChannelId = Uuid::randomHex();
+        $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, true, '/seo-url'));
+
+        $this->expectException(\Throwable::class);
+        $seoResolver->resolve(Uuid::randomHex(), $salesChannelId, '/seo-url');
+    }
+
+    public function testResolveWithQueryStringThrowsWhenFeatureActive(): void
+    {
+        if (!Feature::isActive('v6.8.0.0')) {
+            static::markTestSkipped('Feature v6.8.0.0 must be active to assert the throw behaviour.');
+        }
+
+        $salesChannelId = Uuid::randomHex();
+        $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, true, '/seo-url'));
+
+        $this->expectException(\Throwable::class);
+        $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, '/seo-url', null);
     }
 
     private function getMockConnection(string $salesChannelId, bool $isCanonical, string $pathInfo): Connection&MockObject

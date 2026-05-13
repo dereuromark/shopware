@@ -6,6 +6,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Shopware\Core\Content\Seo\AbstractSeoResolver;
+use Shopware\Core\Content\Seo\ResolvedSeoUrl;
+use Shopware\Core\Content\Seo\SeoUrlRequestContext;
 use Shopware\Core\Framework\Routing\ApiRouteScope;
 use Shopware\Core\Framework\Routing\RequestTransformerInterface;
 use Shopware\Core\Framework\Uuid\Uuid;
@@ -75,17 +77,14 @@ class RequestTransformerTest extends TestCase
         $resolver = $this->createMock(AbstractSeoResolver::class);
         $resolver
             ->expects($this->once())
-            ->method('resolveWithQueryString')
-            ->with(
-                $languageId,
-                $salesChannelId,
-                'Main-product/SWDEMO10001',
-                'test=123'
-            )
-            ->willReturn([
-                'pathInfo' => '/detail/123',
-                'isCanonical' => true,
-            ]);
+            ->method('resolveUrl')
+            ->with(static::callback(static function (SeoUrlRequestContext $context) use ($languageId, $salesChannelId): bool {
+                return $context->languageId === $languageId
+                    && $context->salesChannelId === $salesChannelId
+                    && $context->pathInfo === 'Main-product/SWDEMO10001'
+                    && $context->queryString === 'test=123';
+            }))
+            ->willReturn(new ResolvedSeoUrl(pathInfo: '/detail/123', isCanonical: true));
 
         $domainLoader = $this->createMock(AbstractDomainLoader::class);
         $domainLoader
@@ -143,10 +142,10 @@ class RequestTransformerTest extends TestCase
         $decorated->method('transform')->willReturnCallback(static fn ($request) => $request);
 
         $resolver = $this->createMock(AbstractSeoResolver::class);
-        $resolver->method('resolveWithQueryString')->willReturnCallback(static fn ($langId, $scId, $seoPathInfo) => [
-            'pathInfo' => '/' . ltrim($seoPathInfo, '/'),
-            'isCanonical' => false,
-        ]);
+        $resolver->method('resolveUrl')->willReturnCallback(static fn (SeoUrlRequestContext $context) => new ResolvedSeoUrl(
+            pathInfo: '/' . ltrim($context->pathInfo, '/'),
+            isCanonical: false,
+        ));
 
         $domainLoader = $this->createMock(AbstractDomainLoader::class);
         $domainLoader->method('load')->willReturn([
