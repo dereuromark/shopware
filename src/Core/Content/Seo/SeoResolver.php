@@ -77,7 +77,20 @@ class SeoResolver extends AbstractSeoResolver
 
         $seoPaths = $query->executeQuery()->fetchAllAssociative();
 
-        usort($seoPaths, static function ($a, $b) {
+        usort($seoPaths, static function ($a, $b) use ($normalizedQueryString) {
+            // If a request query string is present, prefer the row whose stored
+            // seo_path_info has a query that matches it. This makes
+            // `path?test=5.2` win over plain `path` when the request also has
+            // `?test=5.2`, while preserving the existing plain-vs-plain tie
+            // breakers below.
+            if ($normalizedQueryString !== null) {
+                $aMatches = self::storedQueryMatches($a['seoPathInfo'] ?? null, $normalizedQueryString);
+                $bMatches = self::storedQueryMatches($b['seoPathInfo'] ?? null, $normalizedQueryString);
+                if ($aMatches !== $bMatches) {
+                    return $aMatches ? -1 : 1;
+                }
+            }
+
             if ($a['isCanonical'] === null) {
                 return 1;
             }
@@ -153,5 +166,19 @@ class SeoResolver extends AbstractSeoResolver
         $normalizedQueryString = Request::normalizeQueryString($queryString);
 
         return $normalizedQueryString === '' ? null : $normalizedQueryString;
+    }
+
+    private static function storedQueryMatches(mixed $storedSeoPathInfo, string $normalizedQueryString): bool
+    {
+        if (!\is_string($storedSeoPathInfo)) {
+            return false;
+        }
+
+        $storedQuery = parse_url($storedSeoPathInfo, \PHP_URL_QUERY);
+        if (!\is_string($storedQuery)) {
+            return false;
+        }
+
+        return self::normalizeQueryString($storedQuery) === $normalizedQueryString;
     }
 }
