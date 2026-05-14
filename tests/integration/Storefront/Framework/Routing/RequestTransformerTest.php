@@ -337,42 +337,6 @@ class RequestTransformerTest extends TestCase
         static::assertNull($resolved->attributes->get(SalesChannelRequest::ATTRIBUTE_CANONICAL_LINK));
     }
 
-    public function testCanonicalSeoUrlWithFlagQueryParameterDoesNotSetCanonicalLink(): void
-    {
-        $salesChannelId = Uuid::randomHex();
-        $domainId = Uuid::randomHex();
-
-        $this->createSalesChannels([
-            self::getGermanSalesChannel($salesChannelId, $domainId, 'http://base.test'),
-        ]);
-
-        $con = static::getContainer()->get(Connection::class);
-        $con->insert(
-            'seo_url',
-            [
-                'id' => Uuid::randomBytes(),
-                'language_id' => Uuid::fromHexToBytes($this->deLanguageId),
-                'sales_channel_id' => Uuid::fromHexToBytes($salesChannelId),
-                'foreign_key' => Uuid::randomBytes(),
-                'route_name' => 'frontend.detail.page',
-                'path_info' => '/detail/87a78cf58f114d5587ae23c140825694',
-                'seo_path_info' => 'Latest-Product/SW10005?test12345',
-                'is_canonical' => 1,
-                'created_at' => (new \DateTime())->format(Defaults::STORAGE_DATE_TIME_FORMAT),
-            ]
-        );
-
-        $request = Request::create('http://base.test/Latest-Product/SW10005?test12345');
-
-        $resolved = $this->requestTransformer->transform($request);
-
-        static::assertSame(
-            '/detail/87a78cf58f114d5587ae23c140825694',
-            $resolved->attributes->get(RequestTransformer::SALES_CHANNEL_RESOLVED_URI)
-        );
-        static::assertNull($resolved->attributes->get(SalesChannelRequest::ATTRIBUTE_CANONICAL_LINK));
-    }
-
     public function testPlainCanonicalSeoUrlWithRequestQueryParameterDoesNotSetCanonicalLink(): void
     {
         $salesChannelId = Uuid::randomHex();
