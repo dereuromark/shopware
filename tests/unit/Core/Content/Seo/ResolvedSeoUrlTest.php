@@ -5,6 +5,7 @@ namespace Shopware\Tests\Unit\Core\Content\Seo;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Shopware\Core\Content\Seo\ResolvedSeoUrl;
+use Shopware\Core\Test\Annotation\DisabledFeatures;
 
 /**
  * @internal
@@ -43,6 +44,7 @@ class ResolvedSeoUrlTest extends TestCase
         static::assertNull($resolved->seoPathInfo);
     }
 
+    #[DisabledFeatures(['v6.8.0.0'])]
     public function testToArrayOmitsNullableNulls(): void
     {
         $resolved = new ResolvedSeoUrl(pathInfo: '/', isCanonical: false);
@@ -50,6 +52,7 @@ class ResolvedSeoUrlTest extends TestCase
         static::assertSame(['pathInfo' => '/', 'isCanonical' => false], $resolved->toArray());
     }
 
+    #[DisabledFeatures(['v6.8.0.0'])]
     public function testToArrayIncludesAllNonNullFields(): void
     {
         $resolved = new ResolvedSeoUrl(
@@ -69,6 +72,7 @@ class ResolvedSeoUrlTest extends TestCase
         ], $resolved->toArray());
     }
 
+    #[DisabledFeatures(['v6.8.0.0'])]
     public function testFromArrayToArrayRoundTrip(): void
     {
         $data = [

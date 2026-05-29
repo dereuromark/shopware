@@ -46,7 +46,7 @@ class SeoResolver extends AbstractSeoResolver
     public function resolveUrl(SeoUrlRequestContext $context): ResolvedSeoUrl
     {
         $seoPathInfo = trim($context->pathInfo, '/');
-        $normalizedQueryString = self::normalizeQueryString($context->queryString);
+        $normalizedQueryString = $this->normalizeQueryString($context->queryString);
 
         $query = (new QueryBuilder($this->connection))
             ->select('id', 'path_info pathInfo', 'seo_path_info seoPathInfo', 'is_canonical isCanonical', 'sales_channel_id salesChannelId')
@@ -65,11 +65,20 @@ class SeoResolver extends AbstractSeoResolver
             ->setParameter('seoPath', $seoPathInfo)
             ->setParameter('seoPathWithSlash', $seoPathInfo . '/');
 
-        if ($normalizedQueryString !== null) {
-            $seoPathConditions[] = 'seo_path_info = :seoPathWithQuery';
-            $seoPathConditions[] = 'seo_path_info = :seoPathWithSlashAndQuery';
-            $query->setParameter('seoPathWithQuery', $seoPathInfo . '?' . $normalizedQueryString)
-                ->setParameter('seoPathWithSlashAndQuery', $seoPathInfo . '/?' . $normalizedQueryString);
+        // Match stored SEO URLs that carry a query string. We compare against both the normalized
+        // query (so `?b=2&a=1` matches a stored `?a=1&b=2`) and the raw request query. The raw form
+        // is required for value-less "flag" queries: Symfony normalizes `?test12345` to `test12345=`,
+        // which would never equal a stored `?test12345`, so the verbatim candidate restores that match.
+        $queryCandidates = array_values(array_unique(array_filter(
+            [$normalizedQueryString, $context->queryString],
+            static fn (?string $query): bool => $query !== null && $query !== ''
+        )));
+
+        foreach ($queryCandidates as $index => $candidate) {
+            $seoPathConditions[] = "seo_path_info = :seoPathWithQuery$index";
+            $seoPathConditions[] = "seo_path_info = :seoPathWithSlashAndQuery$index";
+            $query->setParameter("seoPathWithQuery$index", $seoPathInfo . '?' . $candidate)
+                ->setParameter("seoPathWithSlashAndQuery$index", $seoPathInfo . '/?' . $candidate);
         }
 
         $query->andWhere('(' . implode(' OR ', $seoPathConditions) . ')');
@@ -77,15 +86,15 @@ class SeoResolver extends AbstractSeoResolver
 
         $seoPaths = $query->executeQuery()->fetchAllAssociative();
 
-        usort($seoPaths, static function ($a, $b) use ($normalizedQueryString) {
+        usort($seoPaths, function ($a, $b) use ($normalizedQueryString) {
             // If a request query string is present, prefer the row whose stored
             // seo_path_info has a query that matches it. This makes
             // `path?test=5.2` win over plain `path` when the request also has
             // `?test=5.2`, while preserving the existing plain-vs-plain tie
             // breakers below.
             if ($normalizedQueryString !== null) {
-                $aMatches = self::storedQueryMatches($a['seoPathInfo'] ?? null, $normalizedQueryString);
-                $bMatches = self::storedQueryMatches($b['seoPathInfo'] ?? null, $normalizedQueryString);
+                $aMatches = $this->storedQueryMatches($a['seoPathInfo'] ?? null, $normalizedQueryString);
+                $bMatches = $this->storedQueryMatches($b['seoPathInfo'] ?? null, $normalizedQueryString);
                 if ($aMatches !== $bMatches) {
                     return $aMatches ? -1 : 1;
                 }
@@ -121,7 +130,7 @@ class SeoResolver extends AbstractSeoResolver
 
         if ($seoPath['isCanonical'] && isset($seoPath['seoPathInfo']) && \is_string($seoPath['seoPathInfo'])) {
             $storedQueryString = parse_url($seoPath['seoPathInfo'], \PHP_URL_QUERY);
-            $normalizedStoredQueryString = self::normalizeQueryString(\is_string($storedQueryString) ? $storedQueryString : null);
+            $normalizedStoredQueryString = $this->normalizeQueryString(\is_string($storedQueryString) ? $storedQueryString : null);
 
             if ($normalizedStoredQueryString !== null && $normalizedStoredQueryString !== $normalizedQueryString) {
                 $seoPath['canonicalPathInfo'] = '/' . ltrim($seoPath['seoPathInfo'], '/');
@@ -161,14 +170,14 @@ class SeoResolver extends AbstractSeoResolver
         return ResolvedSeoUrl::fromArray($seoPath);
     }
 
-    private static function normalizeQueryString(?string $queryString): ?string
+    private function normalizeQueryString(?string $queryString): ?string
     {
         $normalizedQueryString = Request::normalizeQueryString($queryString);
 
         return $normalizedQueryString === '' ? null : $normalizedQueryString;
     }
 
-    private static function storedQueryMatches(mixed $storedSeoPathInfo, string $normalizedQueryString): bool
+    private function storedQueryMatches(mixed $storedSeoPathInfo, string $normalizedQueryString): bool
     {
         if (!\is_string($storedSeoPathInfo)) {
             return false;
@@ -179,6 +188,6 @@ class SeoResolver extends AbstractSeoResolver
             return false;
         }
 
-        return self::normalizeQueryString($storedQuery) === $normalizedQueryString;
+        return $this->normalizeQueryString($storedQuery) === $normalizedQueryString;
     }
 }

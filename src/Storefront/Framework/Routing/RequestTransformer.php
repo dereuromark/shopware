@@ -3,6 +3,7 @@
 namespace Shopware\Storefront\Framework\Routing;
 
 use Shopware\Core\Content\Seo\AbstractSeoResolver;
+use Shopware\Core\Content\Seo\ResolvedSeoUrl;
 use Shopware\Core\Content\Seo\SeoUrlRequestContext;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Routing\RequestTransformerInterface;
@@ -13,7 +14,6 @@ use Symfony\Component\HttpFoundation\Request;
 
 /**
  * @phpstan-import-type Domain from AbstractDomainLoader
- * @phpstan-import-type ResolvedSeoUrlArray from AbstractSeoResolver
  */
 #[Package('framework')]
 class RequestTransformer implements RequestTransformerInterface
@@ -175,7 +175,7 @@ class RequestTransformer implements RequestTransformerInterface
          */
         $transformedServerVars = array_merge(
             $request->server->all(),
-            ['REQUEST_URI' => rtrim($request->getBasePath(), '/') . $resolved['pathInfo']]
+            ['REQUEST_URI' => rtrim($request->getBasePath(), '/') . $resolved->pathInfo]
         );
 
         $transformedRequest = $request->duplicate(null, null, null, null, null, $transformedServerVars);
@@ -186,7 +186,7 @@ class RequestTransformer implements RequestTransformerInterface
             $transformedRequest->attributes->get(self::SALES_CHANNEL_ABSOLUTE_BASE_URL)
             . $transformedRequest->attributes->get(self::SALES_CHANNEL_BASE_URL)
         );
-        $transformedRequest->attributes->set(self::SALES_CHANNEL_RESOLVED_URI, $resolved['pathInfo']);
+        $transformedRequest->attributes->set(self::SALES_CHANNEL_RESOLVED_URI, $resolved->pathInfo);
 
         $transformedRequest->attributes->set(PlatformRequest::ATTRIBUTE_SALES_CHANNEL_ID, $salesChannel['salesChannelId']);
         $transformedRequest->attributes->set(SalesChannelRequest::ATTRIBUTE_IS_SALES_CHANNEL_REQUEST, true);
@@ -208,7 +208,7 @@ class RequestTransformer implements RequestTransformerInterface
             $salesChannel['maintenanceIpWhitelist']
         );
 
-        if (isset($resolved['canonicalPathInfo'])) {
+        if ($resolved->canonicalPathInfo !== null) {
             $urlPath = parse_url($salesChannel['url'], \PHP_URL_PATH);
             if ($urlPath === false || $urlPath === null) {
                 $urlPath = '';
@@ -221,7 +221,7 @@ class RequestTransformer implements RequestTransformerInterface
 
             $transformedRequest->attributes->set(
                 SalesChannelRequest::ATTRIBUTE_CANONICAL_LINK,
-                $this->getSchemeAndHttpHost($request) . $baseUrlPath . $resolved['canonicalPathInfo']
+                $this->getSchemeAndHttpHost($request) . $baseUrlPath . $resolved->canonicalPathInfo
             );
         }
 
@@ -324,10 +324,7 @@ class RequestTransformer implements RequestTransformerInterface
         return $bestMatch;
     }
 
-    /**
-     * @return ResolvedSeoUrlArray
-     */
-    private function resolveSeoUrl(Request $request, string $baseUrl, string $languageId, string $salesChannelId): array
+    private function resolveSeoUrl(Request $request, string $baseUrl, string $languageId, string $salesChannelId): ResolvedSeoUrl
     {
         $seoPathInfo = $request->getPathInfo();
 
@@ -365,17 +362,14 @@ class RequestTransformer implements RequestTransformerInterface
             $seoPathInfo = mb_substr($seoPathInfo, mb_strlen($scriptName));
         }
 
-        $resolved = $this->resolver->resolveUrl(new SeoUrlRequestContext(
+        // pathInfo is already normalized with a leading slash by the resolver
+        // (see SeoResolver::resolveUrl() / EmptyPathInfoResolver::resolveUrl()).
+        return $this->resolver->resolveUrl(new SeoUrlRequestContext(
             languageId: $languageId,
             salesChannelId: $salesChannelId,
             pathInfo: $seoPathInfo,
             queryString: $queryString,
         ));
-
-        $data = $resolved->toArray();
-        $data['pathInfo'] = '/' . ltrim($data['pathInfo'], '/');
-
-        return $data;
     }
 
     private function getSchemeAndHttpHost(Request $request): string

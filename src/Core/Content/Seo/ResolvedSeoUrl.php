@@ -2,6 +2,7 @@
 
 namespace Shopware\Core\Content\Seo;
 
+use Shopware\Core\Framework\Feature;
 use Shopware\Core\Framework\Log\Package;
 
 #[Package('inventory')]
@@ -31,10 +32,17 @@ final readonly class ResolvedSeoUrl
     }
 
     /**
+     * @deprecated tag:v6.8.0 - will be removed in v6.8.0, use the object's properties directly instead
+     *
      * @return array{id?: string, pathInfo: string, isCanonical: bool, canonicalPathInfo?: string, seoPathInfo?: string}
      */
     public function toArray(): array
     {
+        Feature::triggerDeprecationOrThrow(
+            'v6.8.0.0',
+            Feature::deprecatedMethodMessage(self::class, __METHOD__, 'v6.8.0.0')
+        );
+
         $data = [
             'pathInfo' => $this->pathInfo,
             'isCanonical' => $this->isCanonical,

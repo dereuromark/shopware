@@ -5,6 +5,7 @@ namespace Shopware\Tests\Unit\Core\Content\Seo;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Result;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -254,6 +255,47 @@ class SeoResolverTest extends TestCase
         static::assertNull($resolved->canonicalPathInfo);
     }
 
+    public function testResolveUrlMatchesStoredFlagQueryVerbatim(): void
+    {
+        $salesChannelId = Uuid::randomHex();
+        $storedSeoPath = 'Latest-Product/SW10005?test12345';
+
+        $connection = $this->createMock(Connection::class);
+        $connection->method('getDatabasePlatform')->willReturn($this->createMock(AbstractPlatform::class));
+
+        $matchResult = FakeResultFactory::createResult([
+            [
+                'id' => Uuid::randomHex(),
+                'salesChannelId' => $salesChannelId,
+                'isCanonical' => true,
+                'pathInfo' => '/detail/flag',
+                'seoPathInfo' => $storedSeoPath,
+            ],
+        ], $connection);
+        $emptyResult = FakeResultFactory::createResult([], $connection);
+
+        // Return the stored row only when the verbatim flag candidate is among the bound params.
+        // Symfony normalizes the request query `test12345` to `test12345=`, so without the raw
+        // candidate the stored `?test12345` would never be matched by the exact-match SQL.
+        $connection->method('executeQuery')->willReturnCallback(
+            static fn (string $sql, array $params = []): Result => \in_array($storedSeoPath, $params, true)
+                ? $matchResult
+                : $emptyResult
+        );
+
+        $seoResolver = new SeoResolver($connection);
+
+        $resolved = $seoResolver->resolveUrl(new SeoUrlRequestContext(
+            Uuid::randomHex(),
+            $salesChannelId,
+            'Latest-Product/SW10005',
+            'test12345',
+        ));
+
+        static::assertSame('/detail/flag', $resolved->pathInfo);
+        static::assertTrue($resolved->isCanonical);
+    }
+
     public function testResolveUrlExactQueryMatchOnly(): void
     {
         $salesChannelId = Uuid::randomHex();
@@ -290,19 +332,6 @@ class SeoResolverTest extends TestCase
 
         $this->expectException(\Throwable::class);
         $seoResolver->resolve(Uuid::randomHex(), $salesChannelId, '/seo-url');
-    }
-
-    public function testResolveWithQueryStringThrowsWhenFeatureActive(): void
-    {
-        if (!Feature::isActive('v6.8.0.0')) {
-            static::markTestSkipped('Feature v6.8.0.0 must be active to assert the throw behaviour.');
-        }
-
-        $salesChannelId = Uuid::randomHex();
-        $seoResolver = new SeoResolver($this->getMockConnection($salesChannelId, true, '/seo-url'));
-
-        $this->expectException(\Throwable::class);
-        $seoResolver->resolveWithQueryString(Uuid::randomHex(), $salesChannelId, '/seo-url', null);
     }
 
     private function getMockConnection(string $salesChannelId, bool $isCanonical, string $pathInfo): Connection&MockObject
