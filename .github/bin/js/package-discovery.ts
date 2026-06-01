@@ -32,10 +32,6 @@ export const EXPECTED_PACKAGE_JSON_FILES: readonly PackageInfo[] = [
     name: 'GitHub Bin JS'
   },
   {
-    path: './.github/bin/js/ai-triage/package.json',
-    name: 'GitHub Bin JS — AI Triage'
-  },
-  {
     path: './src/Administration/Resources/app/administration/eslint-rules/core-rules/package.json',
     name: 'ESLint Core Rules'
   },

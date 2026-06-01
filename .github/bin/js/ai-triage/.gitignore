@@ -1,6 +1,0 @@
-# Local issue fixtures for ad-hoc testing
-issue-*.json
-
-# Runtime outputs from local runs or CI re-imports
-triage-result.json
-triage-stderr.log
