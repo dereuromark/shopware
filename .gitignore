@@ -210,4 +210,8 @@ danger.phar
 
 # Vite deps
 **/.tmp/vite/*
-.github/aw/logs/
+
+# gh aw run snapshots — personal scratch, do not commit. Track the README
+# inside the directory as a marker.
+.github/aw/logs/*
+!.github/aw/logs/README.md

@@ -33,7 +33,7 @@ When you quote shell output (e.g. a `git log` author line, a `gh issue view` bod
 
 ## Anti-patterns — do NOT do this
 
-- Do not `cat` huge files — use `rg -A N`/`rg -B N` for context windows. (`head` / `tail` are NOT in the allowlist any more — a prompt-injected agent could otherwise read `/proc/self/environ` and emit secrets.)
+- Do not `cat` huge files — use `rg -A N`/`rg -B N` for context windows. (`head` / `tail` work in the gh aw sandbox, but they are noisy and a prompt-injected `head /proc/self/environ` would dump environment vars; the AWF firewall and `--exclude-env` for the live secrets neutralise the exfil path but the noise still costs turns. Stick to `rg` context windows.)
 - Do not `git log` without `--oneline` and without a `-- <path>` filter — too noisy.
 - Do not `find /` or unrestricted globs — too slow.
 - Do not run `gh issue list` multiple times with slight variations — pick 1–2 good queries.

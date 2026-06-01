@@ -1,8 +1,28 @@
-# Triage Output — Worked Examples
+# Triage Output — Field Rules & Worked Examples
 
-These are illustrative final outputs in **wrapper-fed JSON** format. Your actual reasoning, paths, SHAs, and issue numbers must come from your real investigation — **never invented**.
+These are illustrative final outputs in the **strict JSON shape** emitted by the gh aw CI workflow (`.github/workflows/triage.md`). The interactive skill emits the equivalent information as Markdown — the field semantics are identical, only the wire format differs. Your actual reasoning, paths, SHAs, and issue numbers must come from your real investigation — **never invented**.
 
-The interactive Markdown format is fully specified by the template in SKILL.md "Operating modes" → no separate example needed here.
+The interactive Markdown layout is fully specified by the template in SKILL.md "Output format" → no separate example needed here.
+
+## Field rules
+
+| Field | Required | Constraints |
+|---|---|---|
+| `disposition` | yes | One enum value — see references/CLASSIFICATION.md |
+| `severity` | yes | One enum value — see references/CLASSIFICATION.md |
+| `suggested_labels` | yes | 1–2 entries from references/DOMAINS.md |
+| `confidence` | yes | Number 0.0–1.0 (see calibration in CLASSIFICATION.md) |
+| `reasoning` | yes | 2–5 sentences, max 2000 chars, must reference shell findings |
+| `evidence_quotes` | yes | 1–5 verbatim spans, max 500 chars each |
+| `duplicate_of` | yes | Plain integer issue number (e.g. `15800` — NOT `"15800"`, NOT `"#15800"`) if `disposition == "duplicate"`, else `null` |
+| `missing_template_fields` | yes | Informational — empty array if all template sections present |
+| `affected_paths` | yes | File paths you identified via `rg`/`find` (empty array if none found) |
+| `related_issues` | yes | Array of plain integers (e.g. `[12345, 12346]` — NOT `["#12345"]`, NOT `["12345"]`). Related but NOT `duplicate_of`. |
+| `related_prs` | yes | Array of plain integers — merged PR numbers, same shape rule as `related_issues` |
+| `recent_commits_in_area` | yes | Short `git log --oneline` entries, max 200 chars each |
+| `change_size_estimate` | yes | One enum: `quick-fix` (<30 LOC single file), `small` (single component), `medium` (cross-component), `large` (architectural), `unknown` |
+
+**Emission rules:** the unattended gh aw workflow emits the JSON object as its final message — no markdown code fence, no preamble, no trailing prose. The post-run validator (`.github/bin/js/validate-triage-output.mjs`) enforces these constraints + scans for secret leakage; outputs that violate fail the validation workflow.
 
 ## A — `valid-bug` with affected code identified
 
@@ -14,8 +34,8 @@ The interactive Markdown format is fully specified by the template in SKILL.md "
   "confidence": 0.92,
   "reasoning": "Export downloads lose their filename extension. rg located src/Core/Content/ImportExport/Service/DownloadService.php; git log surfaced 4cfe2b182ba 'fix: ... (#16632)' which closes #16599 — fix already on trunk. Workaround (rename file) exists, hence medium not high.",
   "evidence_quotes": [
-    "a file is generated that has no file extension",
-    "4cfe2b182ba fix: export temporary url file download missing filename (#16632)"
+    "[issue] a file is generated that has no file extension",
+    "[shell] 4cfe2b182ba fix: export temporary url file download missing filename (#16632)"
   ],
   "duplicate_of": null,
   "missing_template_fields": ["expected_behaviour"],
@@ -36,7 +56,7 @@ The interactive Markdown format is fully specified by the template in SKILL.md "
   "suggested_labels": ["domain/framework", "component/core"],
   "confidence": 0.45,
   "reasoning": "Body says only 'shop is broken pls fix'. No version, area, actual/expected, or repro. Cannot describe defect. Domain + component labels are placeholders (rubric requires a component/* pair for framework); severity defaults low. No shell tools run.",
-  "evidence_quotes": ["shop is broken pls fix"],
+  "evidence_quotes": ["[issue] shop is broken pls fix"],
   "duplicate_of": null,
   "missing_template_fields": ["shopware_version", "affected_area", "actual_behaviour", "expected_behaviour", "reproduction_steps"],
   "affected_paths": [],
@@ -57,8 +77,8 @@ The interactive Markdown format is fully specified by the template in SKILL.md "
   "confidence": 0.88,
   "reasoning": "Same defect as #15800: 'sw-media-upload-v2 cannot be cleared'. gh issue view 15800 shows matching actual_behaviour + repro. #15800 still open, no fix on trunk.",
   "evidence_quotes": [
-    "sw-media-upload-v2 ... can't be cleared anymore",
-    "issue #15800: 'media upload cannot be cleared once set'"
+    "[issue] sw-media-upload-v2 ... can't be cleared anymore",
+    "[shell] issue #15800: 'media upload cannot be cleared once set'"
   ],
   "duplicate_of": 15800,
   "missing_template_fields": [],
@@ -80,8 +100,8 @@ The interactive Markdown format is fully specified by the template in SKILL.md "
   "confidence": 0.82,
   "reasoning": "Reporter: 'plugin XYZ doesn't work after install'. rg confirms plugin XYZ is third-party (not in src/). Behaviour matches the plugin's documented `shopware.yaml` config requirement. Not a core defect.",
   "evidence_quotes": [
-    "plugin XYZ doesn't work after install",
-    "rg --files src/ -g 'XYZ*' returned no matches"
+    "[issue] plugin XYZ doesn't work after install",
+    "[shell] rg --files src/ -g 'XYZ*' returned no matches"
   ],
   "duplicate_of": null,
   "missing_template_fields": [],
@@ -103,8 +123,8 @@ The interactive Markdown format is fully specified by the template in SKILL.md "
   "confidence": 0.79,
   "reasoning": "Reporter wants product list sortable by margin. rg shows sw-product list view exposes a fixed sortable column set (name/stock/price); margin is not a stored column. New capability, not a regression.",
   "evidence_quotes": [
-    "product list does not let me sort by margin",
-    "sortable columns: name, stock, price"
+    "[issue] product list does not let me sort by margin",
+    "[shell] sortable columns: name, stock, price"
   ],
   "duplicate_of": null,
   "missing_template_fields": ["actual_behaviour"],

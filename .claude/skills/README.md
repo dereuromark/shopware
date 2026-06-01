@@ -1,12 +1,12 @@
 # Shopware AI Skills
 
-Portable AI capabilities packaged in the [Anthropic Agent Skills](https://agentskills.io) format. Auto-loaded by Claude Code, opencode, Codex CLI, Cursor, Gemini CLI and other Agent Skills-compatible runtimes when their `description` matches the user's message.
+Portable AI capabilities packaged in the [Anthropic Agent Skills](https://agentskills.io) format. Auto-loaded by Claude Code, opencode, Codex CLI, Cursor, Gemini CLI and other Agent-Skills-compatible runtimes when their `description` matches the user's message.
 
 ## Available skills
 
 | Skill | Trigger phrases (examples) | What it does |
 |---|---|---|
-| [`triage`](triage/SKILL.md) | "triage issue #X", "classify this bug", "is this a duplicate", "what severity is #N" | Triages a Shopware 6 GitHub bug issue — identifies affected code area, checks for related fixes, emits a structured JSON decision (disposition, severity, suggested labels, confidence, evidence). |
+| [`triage`](triage/SKILL.md) | "triage issue #X", "classify this bug", "is this a duplicate", "what severity is #N" | Triages a Shopware 6 GitHub bug issue — identifies the affected code area, checks for related fixes or duplicates, and emits a Markdown summary (disposition, severity, suggested labels, confidence, evidence). |
 | [`review`](review/SKILL.md) | "review PR #X", "security review this branch", "review my staged changes" | Reviews a Shopware 6 PR or local diff through calibrated persona lenses, dedupes findings, and emits Markdown or schema-valid JSON depending on invocation mode. |
 
 ## How auto-loading works
@@ -19,15 +19,14 @@ When you start a session in this repo with Claude Code / opencode / Codex CLI:
 
 No flags, no plugins — drop into a session and just describe what you want.
 
-## Two operating modes
+## Unattended twins
 
-Each skill works two ways:
+A skill can additionally run unattended in CI via [GitHub Agentic Workflows](https://github.com/githubnext/gh-aw): a workflow source at `.github/workflows/<name>.md` plus a `runtime-import`-ed policy fragment at `.github/aw/<name>-policy.md`. The shared rubric lives in `references/POLICY.md` and is loaded by both surfaces — they cannot drift on the policy.
 
-- **Interactive (you, in your editor)** — say "triage issue #16599" → skill auto-loads. The agent uses the shell (`rg`, `git`, `gh`) to investigate.
-- **Wrapper-fed (CI / scripts)** — `.github/bin/js/ai-triage/` etc. invoke the same SKILL.md programmatically with PII redaction, schema validation, and engine-engine multiplexing. One source of truth for the skill content.
+Current twins: `triage` (see `.github/workflows/triage.md` + `.github/aw/triage-policy.md`).
+
+For the gh aw setup, secrets, and registration mechanics, see [`.github/aw/README.md`](../../.github/aw/README.md).
 
 ## Adding a new skill
 
-1. Create `.claude/skills/<name>/SKILL.md` with at minimum `name` + `description` frontmatter (see [the spec](https://agentskills.io/specification)).
-2. Add references and assets as needed. Keep SKILL.md short; push detail into `references/`.
-3. Optional: add a wrapper at `.github/bin/js/ai-<name>/` if you also want CI invocation.
+See the checklist in [`coding-guidelines/core/agent-skills.md`](../../coding-guidelines/core/agent-skills.md) — required frontmatter, references layout, optional gh aw twin, registration trick, and engine pin convention.
