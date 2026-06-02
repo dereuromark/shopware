@@ -19,7 +19,6 @@ use Shopware\Core\Framework\DataAbstractionLayer\Field\ParentAssociationField;
 use Shopware\Core\Framework\DataAbstractionLayer\Field\ReferenceVersionField;
 use Shopware\Core\Framework\DataAbstractionLayer\Field\TranslatedField;
 use Shopware\Core\Framework\DataAbstractionLayer\Field\VersionField;
-use Shopware\Core\Framework\DataAbstractionLayer\PartialEntity;
 use Shopware\Core\Framework\DataAbstractionLayer\Write\Command\WriteCommandQueue;
 use Shopware\Core\Framework\DataAbstractionLayer\Write\DataStack\KeyValuePair;
 use Shopware\Core\Framework\DataAbstractionLayer\Write\EntityExistence;
@@ -86,9 +85,6 @@ class EntityHydrator
         self::$partialFullPaths = [];
 
         if (self::$partial !== []) {
-            /** @var TEntityCollection $collection */
-            $collection = new EntityCollection();
-
             $this->mapPartialFieldsToHydrate(self::$partial, $root);
         }
 
@@ -213,16 +209,12 @@ class EntityHydrator
             if ($field instanceof ManyToOneAssociationField || $field instanceof OneToOneAssociationField) {
                 $association = $this->manyToOne($row, $root, $field, $context);
 
-                if ($association === null && $entity instanceof PartialEntity) {
-                    continue;
-                }
-
                 if ($field->is(Extension::class)) {
                     if ($association) {
-                        $entity->addExtension($property, $association);
+                        $this->addExtension($entity, $property, $association);
                     }
                 } else {
-                    $entity->assign([$property => $association]);
+                    $this->assignValue($entity, $property, $association);
                 }
 
                 continue;
@@ -253,7 +245,7 @@ class EntityHydrator
             if ($field instanceof TranslatedField) {
                 // contains the resolved translation chain value
                 $decoded = $typed->getSerializer()->decode($typed, $value);
-                $entity->addTranslated($property, $decoded);
+                $this->addTranslated($entity, $property, $decoded);
 
                 $inherited = $definition->isInheritanceAware() && $context->considerInheritance();
                 $chain = EntityDefinitionQueryHelper::buildTranslationChain($root, $context, $inherited);
@@ -262,7 +254,7 @@ class EntityHydrator
                 $key = array_shift($chain) . '.' . $property;
 
                 $decoded = $typed->getSerializer()->decode($typed, $row[$key]);
-                $entity->assign([$property => $decoded]);
+                $this->assignValue($entity, $property, $decoded);
 
                 continue;
             }
@@ -274,7 +266,7 @@ class EntityHydrator
                 \assert($foreignKeys instanceof ArrayStruct);
                 $foreignKeys->set($property, $decoded);
             } else {
-                $entity->assign([$property => $decoded]);
+                $this->assignValue($entity, $property, $decoded);
             }
         }
 
@@ -326,11 +318,10 @@ class EntityHydrator
             $fieldValue = self::value($row, $root, $field);
             $translation = $fieldValue !== null ? $typed->getSerializer()->decode($typed, $fieldValue) : null;
 
-            $entity->addTranslated($field, $translation);
+            $this->addTranslated($entity, $field, $translation);
 
             $chainFieldValue = self::value($row, $chain[0], $field);
-            // @phpstan-ignore property.dynamicName (We have to dynamically set all translated field in the original entity)
-            $entity->$field = $chainFieldValue !== null ? ($fieldValue === $chainFieldValue ? $translation : $typed->getSerializer()->decode($typed, $chainFieldValue)) : null;
+            $this->assignValue($entity, $field, $chainFieldValue !== null ? ($fieldValue === $chainFieldValue ? $translation : $typed->getSerializer()->decode($typed, $chainFieldValue)) : null);
         }
     }
 
@@ -406,7 +397,7 @@ class EntityHydrator
 
             $decoded = $customField->getSerializer()->decode($customField, self::value($row, $chain[0], $propertyName));
 
-            $entity->assign([$propertyName => $decoded]);
+            $this->assignValue($entity, $propertyName, $decoded);
 
             $values = [];
             foreach ($chain as $accessor) {
@@ -423,7 +414,7 @@ class EntityHydrator
              */
             $merged = $this->mergeJson(array_reverse($values, false));
             $decoded = $customField->getSerializer()->decode($customField, $merged);
-            $entity->addTranslated($propertyName, $decoded);
+            $this->addTranslated($entity, $propertyName, $decoded);
 
             if ($inherited) {
                 /*
@@ -443,7 +434,7 @@ class EntityHydrator
 
                 $merged = $this->mergeJson($values);
                 $decoded = $customField->getSerializer()->decode($customField, $merged);
-                $entity->assign([$propertyName => $decoded]);
+                $this->assignValue($entity, $propertyName, $decoded);
             }
 
             return;
@@ -452,7 +443,7 @@ class EntityHydrator
         // field is not inherited or request should work with raw data? decode child attributes and return
         if (!$inherited) {
             $value = $field->getSerializer()->decode($field, $value);
-            $entity->assign([$propertyName => $value]);
+            $this->assignValue($entity, $propertyName, $value);
 
             return;
         }
@@ -463,7 +454,7 @@ class EntityHydrator
         if (!isset($row[$parentKey])) {
             $value = $field->getSerializer()->decode($field, $value);
 
-            $entity->assign([$propertyName => $value]);
+            $this->assignValue($entity, $propertyName, $value);
 
             return;
         }
@@ -473,7 +464,7 @@ class EntityHydrator
 
         $merged = $field->getSerializer()->decode($field, $mergedJson);
 
-        $entity->assign([$propertyName => $merged]);
+        $this->assignValue($entity, $propertyName, $merged);
     }
 
     /**
@@ -555,7 +546,6 @@ class EntityHydrator
     {
         $isPartial = self::$partial !== [];
         $hydratorClass = $definition->getHydratorClass();
-        $entityClass = $isPartial ? PartialEntity::class : $entityClass;
 
         if ($isPartial) {
             $hydratorClass = EntityHydrator::class;
@@ -575,20 +565,186 @@ class EntityHydrator
             return self::$hydrated[$cacheKey];
         }
 
-        $entity = new $entityClass();
+        if (!is_a($entityClass, Entity::class, true)) {
+            throw DataAbstractionLayerException::entityHydratorError(\sprintf('Expected entity class to be instance of Entity.php, got %s', $entityClass));
+        }
+
+        /** @var class-string<Entity> $entityClass */
+        $entity = $this->createEntity($definition, $entityClass, $identifier, $isPartial);
+
+        if (!self::isLazyObject($entity)) {
+            $entity->addExtension(EntityReader::FOREIGN_KEYS, new ArrayStruct([], $definition->getEntityName() . '_foreign_keys_extension'));
+            $entity->addExtension(EntityReader::INTERNAL_MAPPING_STORAGE, new ArrayStruct());
+
+            $entity->setUniqueIdentifier($identifier);
+            $entity->internalSetEntityData($definition->getEntityName(), $definition->getFieldVisibility());
+        }
+
+        $entity = $hydrator->assign($definition, $entity, $root, $row, $context);
+
+        return self::$hydrated[$cacheKey] = $entity;
+    }
+
+    /**
+     * @param class-string<Entity> $entityClass
+     */
+    private function createEntity(EntityDefinition $definition, string $entityClass, string $identifier, bool $isPartial): Entity
+    {
+        if (!$isPartial || is_a($entityClass, ArrayEntity::class, true)) {
+            return new $entityClass();
+        }
+
+        $entityName = $definition->getEntityName();
+        $reflection = new \ReflectionClass($entityClass);
+        // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+        $entity = $reflection->newLazyGhost(static function (Entity $entity) use ($entityName, $identifier): void {
+            throw DataAbstractionLayerException::partialFieldNotLoaded(
+                $entityName,
+                $entity::class,
+                $identifier,
+                self::getLoadedFields($entity),
+            );
+        });
 
         if (!$entity instanceof Entity) {
             throw DataAbstractionLayerException::entityHydratorError(\sprintf('Expected instance of Entity.php, got %s', $entity::class));
         }
 
-        $entity->addExtension(EntityReader::FOREIGN_KEYS, new ArrayStruct([], $definition->getEntityName() . '_foreign_keys_extension'));
-        $entity->addExtension(EntityReader::INTERNAL_MAPPING_STORAGE, new ArrayStruct());
+        $this->writeRawProperty($entity, '_uniqueIdentifier', $identifier);
+        $this->writeRawProperty($entity, '_entityName', $entityName);
+        $this->writeRawProperty($entity, '_fieldVisibility', $definition->getFieldVisibility());
+        $this->writeRawProperty($entity, 'translated', []);
+        $this->writeRawProperty($entity, 'extensions', [
+            EntityReader::FOREIGN_KEYS => new ArrayStruct([], $entityName . '_foreign_keys_extension'),
+            EntityReader::INTERNAL_MAPPING_STORAGE => new ArrayStruct(),
+        ]);
 
-        $entity->setUniqueIdentifier($identifier);
-        $entity->internalSetEntityData($definition->getEntityName(), $definition->getFieldVisibility());
+        return $entity;
+    }
 
-        $entity = $hydrator->assign($definition, $entity, $root, $row, $context);
+    private function assignValue(Entity $entity, string $property, mixed $value): void
+    {
+        if (!self::isLazyObject($entity)) {
+            $entity->assign([$property => $value]);
 
-        return self::$hydrated[$cacheKey] = $entity;
+            return;
+        }
+
+        if ($this->writeRawProperty($entity, $property, $value)) {
+            return;
+        }
+
+        $entity->assign([$property => $value]);
+    }
+
+    private function addTranslated(Entity $entity, string $property, mixed $value): void
+    {
+        if (!self::isLazyObject($entity)) {
+            $entity->addTranslated($property, $value);
+
+            return;
+        }
+
+        $translated = $this->getRawProperty($entity, 'translated');
+        \assert(\is_array($translated));
+        $translated[$property] = $value;
+
+        $this->writeRawProperty($entity, 'translated', $translated);
+    }
+
+    private function addExtension(Entity $entity, string $property, ArrayStruct|Entity $extension): void
+    {
+        if (!self::isLazyObject($entity)) {
+            $entity->addExtension($property, $extension);
+
+            return;
+        }
+
+        $extensions = $this->getRawProperty($entity, 'extensions');
+        \assert(\is_array($extensions));
+        $extensions[$property] = $extension;
+
+        $this->writeRawProperty($entity, 'extensions', $extensions);
+    }
+
+    private function writeRawProperty(object $object, string $property, mixed $value): bool
+    {
+        $reflection = new \ReflectionClass($object::class);
+
+        do {
+            if ($reflection->hasProperty($property)) {
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                $reflection->getProperty($property)->setRawValueWithoutLazyInitialization($object, $value);
+
+                return true;
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        return false;
+    }
+
+    private function getRawProperty(object $object, string $property): mixed
+    {
+        $reflection = new \ReflectionClass($object::class);
+
+        do {
+            if ($reflection->hasProperty($property)) {
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                return $reflection->getProperty($property)->getRawValue($object);
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        throw DataAbstractionLayerException::entityHydratorError(\sprintf('Property %s not found on %s', $property, $object::class));
+    }
+
+    private static function isLazyObject(Entity $entity): bool
+    {
+        $reflection = new \ReflectionClass($entity::class);
+
+        // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+        return $reflection->isUninitializedLazyObject($entity);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function getLoadedFields(Entity $entity): array
+    {
+        $fields = [];
+        $reflection = new \ReflectionClass($entity::class);
+
+        do {
+            foreach ($reflection->getProperties() as $property) {
+                $name = $property->getName();
+
+                if (str_starts_with($name, '_') || \in_array($name, ['extensions', 'createdAt', 'updatedAt'], true)) {
+                    continue;
+                }
+
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                if ($property->isLazy($entity)) {
+                    continue;
+                }
+
+                if ($name === EntityDefinition::TRANSLATED_FIELD) {
+                    // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                    if ($property->getRawValue($entity) === []) {
+                        continue;
+                    }
+                }
+
+                $fields[] = $name;
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        sort($fields);
+
+        return $fields;
     }
 }

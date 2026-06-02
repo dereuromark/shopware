@@ -18,12 +18,11 @@ use Shopware\Core\Content\Product\ProductDefinition;
 use Shopware\Core\Content\Product\ProductEntity;
 use Shopware\Core\Content\Product\ProductEvents;
 use Shopware\Core\Content\Product\SalesChannel\Price\AbstractProductPriceCalculator;
+use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductEntity;
 use Shopware\Core\Framework\Api\Context\AdminApiSource;
-use Shopware\Core\Framework\DataAbstractionLayer\Entity;
 use Shopware\Core\Framework\DataAbstractionLayer\Event\EntityDeleteEvent;
 use Shopware\Core\Framework\DataAbstractionLayer\Event\EntityLoadedEvent;
 use Shopware\Core\Framework\DataAbstractionLayer\Event\EntityWriteEvent;
-use Shopware\Core\Framework\DataAbstractionLayer\PartialEntity;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Uuid\Uuid;
 use Shopware\Core\PlatformRequest;
@@ -68,14 +67,14 @@ class ProductSubscriber implements EventSubscriberInterface
     }
 
     /**
-     * @param EntityLoadedEvent<ProductEntity|PartialEntity> $event
+     * @param EntityLoadedEvent<ProductEntity> $event
      */
     public function loaded(EntityLoadedEvent $event): void
     {
         $isAdminSource = $event->getContext()->getSource() instanceof AdminApiSource;
 
         foreach ($event->getEntities() as $product) {
-            if (!$product instanceof ProductEntity && !$product instanceof PartialEntity) {
+            if (!$product instanceof ProductEntity) {
                 continue;
             }
 
@@ -90,33 +89,31 @@ class ProductSubscriber implements EventSubscriberInterface
     }
 
     /**
-     * @param SalesChannelEntityLoadedEvent<ProductEntity|PartialEntity> $event
+     * @param SalesChannelEntityLoadedEvent<SalesChannelProductEntity> $event
      */
     public function salesChannelLoaded(SalesChannelEntityLoadedEvent $event): void
     {
         foreach ($event->getEntities() as $product) {
-            $price = $product->get('cheapestPrice');
-
-            if ($price instanceof CheapestPriceContainer) {
-                $product->assign([
-                    'cheapestPrice' => $price->resolve($event->getContext()),
-                    'cheapestPriceContainer' => $price,
-                ]);
+            if (!$product instanceof SalesChannelProductEntity) {
+                continue;
             }
 
-            $assigns = [];
+            if ($product->has('cheapestPrice')) {
+                $price = $product->getCheapestPrice();
 
-            if (($properties = $product->get('properties')) !== null) {
-                $assigns['sortedProperties'] = $this->propertyGroupSorter->sort($properties);
+                if ($price instanceof CheapestPriceContainer) {
+                    $product->setCheapestPrice($price->resolve($event->getContext()));
+                    $product->setCheapestPriceContainer($price);
+                }
             }
 
-            $assigns['calculatedMaxPurchase'] = $this->maxPurchaseCalculator->calculate($product, $event->getSalesChannelContext());
+            if ($product->has('properties') && ($properties = $product->getProperties()) !== null) {
+                $product->setSortedProperties($this->propertyGroupSorter->sort($properties));
+            }
 
-            $assigns['isNew'] = $this->isNewDetector->isNew($product, $event->getSalesChannelContext());
-
-            $assigns['measurements'] = $this->measurementUnitBuilder->buildFromContext($product, $event->getSalesChannelContext());
-
-            $product->assign($assigns);
+            $product->setCalculatedMaxPurchase($this->maxPurchaseCalculator->calculate($product, $event->getSalesChannelContext()));
+            $product->setIsNew($this->isNewDetector->isNew($product, $event->getSalesChannelContext()));
+            $product->setMeasurements($this->measurementUnitBuilder->buildFromContext($product, $event->getSalesChannelContext()));
 
             $this->setDefaultLayout($product, $event->getSalesChannelContext()->getSalesChannelId());
 
@@ -229,29 +226,26 @@ class ProductSubscriber implements EventSubscriberInterface
         );
     }
 
-    /**
-     * @param Entity $product - typehint as Entity because it could be a ProductEntity or PartialEntity
-     */
-    private function setDefaultLayout(Entity $product, ?string $salesChannelId = null): void
+    private function setDefaultLayout(ProductEntity $product, ?string $salesChannelId = null): void
     {
         if (!$product->has('cmsPageId')) {
             return;
         }
 
-        if ($product->get('cmsPageId') !== null) {
+        if ($product->getCmsPageId() !== null) {
             return;
         }
 
         $cmsPageId = $this->systemConfigService->get(ProductDefinition::CONFIG_KEY_DEFAULT_CMS_PAGE_PRODUCT, $salesChannelId);
 
-        if (!$cmsPageId) {
+        if (!\is_string($cmsPageId) || $cmsPageId === '') {
             return;
         }
 
-        $product->assign(['cmsPageId' => $cmsPageId]);
+        $product->setCmsPageId($cmsPageId);
     }
 
-    private function convertMeasurementUnit(ProductEntity|PartialEntity $product): void
+    private function convertMeasurementUnit(ProductEntity $product): void
     {
         $lengthUnitHeader = $this->requestStack->getCurrentRequest()?->headers->get(PlatformRequest::HEADER_MEASUREMENT_LENGTH_UNIT);
         $weightUnitHeader = $this->requestStack->getCurrentRequest()?->headers->get(PlatformRequest::HEADER_MEASUREMENT_WEIGHT_UNIT);

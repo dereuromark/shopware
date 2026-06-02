@@ -2,8 +2,9 @@
 
 namespace Shopware\Core\Content\Product;
 
+use Shopware\Core\Content\Property\Aggregate\PropertyGroupOption\PropertyGroupOptionEntity;
+use Shopware\Core\Content\Property\PropertyGroupEntity;
 use Shopware\Core\Framework\DataAbstractionLayer\Entity;
-use Shopware\Core\Framework\DataAbstractionLayer\EntityCollection;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Plugin\Exception\DecorationPatternException;
 
@@ -17,46 +18,45 @@ class ProductVariationBuilder extends AbstractProductVariationBuilder
 
     public function build(Entity $product): void
     {
-        /** @var EntityCollection<Entity>|null $options */
-        $options = $product->get('options');
+        if (!$product instanceof ProductEntity || !$product->has('options')) {
+            return;
+        }
+
+        $options = $product->getOptions();
         if ($options === null) {
-            $product->assign([
-                'variation' => [],
-            ]);
+            $product->setVariation([]);
 
             return;
         }
 
         $options = $options->getElements();
 
-        uasort($options, static function (Entity $a, Entity $b) {
-            $aGroup = $a->get('group');
-            $bGroup = $b->get('group');
-            if (!$aGroup instanceof Entity || !$bGroup instanceof Entity) {
-                return $a->get('groupId') <=> $b->get('groupId');
+        uasort($options, static function (PropertyGroupOptionEntity $a, PropertyGroupOptionEntity $b) {
+            $aGroup = $a->getGroup();
+            $bGroup = $b->getGroup();
+            if (!$aGroup instanceof PropertyGroupEntity || !$bGroup instanceof PropertyGroupEntity) {
+                return $a->getGroupId() <=> $b->getGroupId();
             }
 
-            if ($aGroup->get('position') === $bGroup->get('position')) {
+            if ($aGroup->getPosition() === $bGroup->getPosition()) {
                 return $aGroup->getTranslation('name') <=> $bGroup->getTranslation('name');
             }
 
-            return $aGroup->get('position') <=> $bGroup->get('position');
+            return $aGroup->getPosition() <=> $bGroup->getPosition();
         });
 
         // fallback - simply take all option names unordered
-        $names = array_map(static function (Entity $option) {
-            if (!$option->get('group') instanceof Entity) {
+        $names = array_map(static function (PropertyGroupOptionEntity $option) {
+            if (!$option->getGroup() instanceof PropertyGroupEntity) {
                 return [];
             }
 
             return [
-                'group' => $option->get('group')->getTranslation('name'),
+                'group' => $option->getGroup()->getTranslation('name'),
                 'option' => $option->getTranslation('name'),
             ];
         }, $options);
 
-        $product->assign([
-            'variation' => \array_values(\array_filter($names)),
-        ]);
+        $product->setVariation(\array_values(\array_filter($names)));
     }
 }

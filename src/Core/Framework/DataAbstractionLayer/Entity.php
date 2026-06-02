@@ -102,7 +102,7 @@ class Entity extends Struct
             $this->checkIfPropertyAccessIsAllowed($property);
         }
 
-        if ($this->has($property)) {
+        if (property_exists($this, $property)) {
             // @phpstan-ignore property.dynamicName
             return $this->$property;
         }
@@ -127,7 +127,7 @@ class Entity extends Struct
             }
         }
 
-        return property_exists($this, $property);
+        return property_exists($this, $property) && !self::isLazyProperty($this, $property);
     }
 
     /**
@@ -294,5 +294,21 @@ class Entity extends Struct
         }
 
         return $this->_fieldVisibility->isVisible($property);
+    }
+
+    private static function isLazyProperty(self $entity, string $property): bool
+    {
+        $reflection = new \ReflectionClass($entity::class);
+
+        do {
+            if ($reflection->hasProperty($property)) {
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                return $reflection->getProperty($property)->isLazy($entity);
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        return false;
     }
 }

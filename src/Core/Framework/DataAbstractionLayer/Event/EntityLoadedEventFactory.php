@@ -135,7 +135,7 @@ class EntityLoadedEventFactory
         $internalEntityName = $entity->getInternalEntityName() ?? '';
         $mapping[$internalEntityName][] = $entity;
 
-        foreach ($entity->getVars() as $value) {
+        foreach ($this->getLoadedValues($entity) as $value) {
             if ($value instanceof Entity) {
                 $this->map($value, $mapping);
 
@@ -151,5 +151,42 @@ class EntityLoadedEventFactory
 
             $this->recursion($value, $mapping);
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function getLoadedValues(Entity $entity): array
+    {
+        if (!self::isLazyObject($entity)) {
+            return $entity->getVars();
+        }
+
+        $values = [];
+        $reflection = new \ReflectionClass($entity::class);
+
+        do {
+            foreach ($reflection->getProperties() as $property) {
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                if ($property->isLazy($entity)) {
+                    continue;
+                }
+
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                $values[$property->getName()] = $property->getRawValue($entity);
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        return $values;
+    }
+
+    private static function isLazyObject(Entity $entity): bool
+    {
+        $reflection = new \ReflectionClass($entity::class);
+
+        // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+        return $reflection->isUninitializedLazyObject($entity);
     }
 }

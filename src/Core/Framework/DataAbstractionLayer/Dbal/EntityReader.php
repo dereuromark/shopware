@@ -35,6 +35,7 @@ use Shopware\Core\Framework\DataAbstractionLayer\Search\Parser\SqlQueryParser;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Sorting\FieldSorting;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Struct\ArrayStruct;
+use Shopware\Core\Framework\Struct\Struct;
 use Shopware\Core\Framework\Uuid\Uuid;
 use Shopware\Tests\Integration\Core\Framework\DataAbstractionLayer\Dbal\EntityReaderTest;
 
@@ -609,7 +610,6 @@ class EntityReader implements EntityReaderInterface
         if ($isPartialLoading) {
             // Make sure our collection index will be loaded
             $fieldsForPartialLoading[$propertyName] = [];
-            $collectionClass = EntityCollection::class;
         }
 
         $data = $this->_read(
@@ -637,17 +637,7 @@ class EntityReader implements EntityReaderInterface
                 $structData->fill($grouped[$entity->getUniqueIdentifier()]);
             }
 
-            // assign data of child immediately
-            if ($association->is(Extension::class)) {
-                $entity->addExtension($association->getPropertyName(), $structData);
-            } else {
-                if ($association->is(AsArray::class)) {
-                    $structData = $structData->getElements();
-                }
-
-                // otherwise the data will be assigned directly as properties
-                $entity->assign([$association->getPropertyName() => $structData]);
-            }
+            $structData = $this->assignAssociation($entity, $association, $structData);
 
             if (!$association->is(Inherited::class) || \count($structData) > 0 || !$context->considerInheritance()) {
                 continue;
@@ -659,18 +649,85 @@ class EntityReader implements EntityReaderInterface
                 $structData->fill($grouped[$entity->get('parentId')]);
             }
 
-            if ($association->is(Extension::class)) {
-                $entity->addExtension($association->getPropertyName(), $structData);
-
-                continue;
-            }
-
-            if ($association->is(AsArray::class)) {
-                $structData = $structData->getElements();
-            }
-
-            $entity->assign([$association->getPropertyName() => $structData]);
+            $this->assignAssociation($entity, $association, $structData);
         }
+    }
+
+    private function assignAssociation(Entity $entity, AssociationField $association, mixed $structData): mixed
+    {
+        $property = $association->getPropertyName();
+
+        if ($association->is(Extension::class)) {
+            \assert($structData instanceof Struct);
+
+            if (self::isLazyObject($entity)) {
+                $extensions = $this->getRawProperty($entity, 'extensions');
+                \assert(\is_array($extensions));
+                $extensions[$property] = $structData;
+
+                $this->writeRawProperty($entity, 'extensions', $extensions);
+            } else {
+                $entity->addExtension($property, $structData);
+            }
+
+            return $structData;
+        }
+
+        if ($association->is(AsArray::class) && $structData instanceof EntityCollection) {
+            $structData = $structData->getElements();
+        }
+
+        if (self::isLazyObject($entity)) {
+            if (!$this->writeRawProperty($entity, $property, $structData)) {
+                $entity->assign([$property => $structData]);
+            }
+        } else {
+            $entity->assign([$property => $structData]);
+        }
+
+        return $structData;
+    }
+
+    private function writeRawProperty(object $object, string $property, mixed $value): bool
+    {
+        $reflection = new \ReflectionClass($object::class);
+
+        do {
+            if ($reflection->hasProperty($property)) {
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                $reflection->getProperty($property)->setRawValueWithoutLazyInitialization($object, $value);
+
+                return true;
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        return false;
+    }
+
+    private function getRawProperty(object $object, string $property): mixed
+    {
+        $reflection = new \ReflectionClass($object::class);
+
+        do {
+            if ($reflection->hasProperty($property)) {
+                // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+                return $reflection->getProperty($property)->getRawValue($object);
+            }
+
+            $reflection = $reflection->getParentClass();
+        } while ($reflection !== false);
+
+        throw DataAbstractionLayerException::entityHydratorError(\sprintf('Property %s not found on %s', $property, $object::class));
+    }
+
+    private static function isLazyObject(Entity $entity): bool
+    {
+        $reflection = new \ReflectionClass($entity::class);
+
+        // @phpstan-ignore method.notFound (PHP 8.4 native lazy-object API)
+        return $reflection->isUninitializedLazyObject($entity);
     }
 
     /**
@@ -756,16 +813,7 @@ class EntityReader implements EntityReaderInterface
 
             $structData = $data->getList($mappingIds);
 
-            // assign data of child immediately
-            if ($association->is(Extension::class)) {
-                $entity->addExtension($association->getPropertyName(), $structData);
-            } else {
-                if ($association->is(AsArray::class)) {
-                    $structData = $structData->getElements();
-                }
-
-                $entity->assign([$association->getPropertyName() => $structData]);
-            }
+            $structData = $this->assignAssociation($entity, $association, $structData);
 
             if (!$association->is(Inherited::class) || \count($structData) || !$context->considerInheritance()) {
                 continue;
@@ -782,16 +830,7 @@ class EntityReader implements EntityReaderInterface
 
             $structData = $data->getList($mappingIds);
 
-            // assign data of child immediately
-            if ($association->is(Extension::class)) {
-                $entity->addExtension($association->getPropertyName(), $structData);
-            } else {
-                if ($association->is(AsArray::class)) {
-                    $structData = $structData->getElements();
-                }
-
-                $entity->assign([$association->getPropertyName() => $structData]);
-            }
+            $this->assignAssociation($entity, $association, $structData);
         }
     }
 
@@ -842,16 +881,7 @@ class EntityReader implements EntityReaderInterface
             // use assign function to avoid setter name building
             $structData = $data->getList($fks);
 
-            // if the association is added as extension (for plugins), we have to add the data as extension
-            if ($association->is(Extension::class)) {
-                $struct->addExtension($association->getPropertyName(), $structData);
-            } else {
-                if ($association->is(AsArray::class)) {
-                    $structData = $structData->getElements();
-                }
-
-                $struct->assign([$association->getPropertyName() => $structData]);
-            }
+            $this->assignAssociation($struct, $association, $structData);
         }
     }
 
@@ -1055,16 +1085,7 @@ class EntityReader implements EntityReaderInterface
                 $structData->sortByIdArray($mapping[$parentId]);
             }
 
-            // if the association is added as extension (for plugins), we have to add the data as extension
-            if ($association->is(Extension::class)) {
-                $struct->addExtension($association->getPropertyName(), $structData);
-            } else {
-                if ($association->is(AsArray::class)) {
-                    $structData = $structData->getElements();
-                }
-
-                $struct->assign([$association->getPropertyName() => $structData]);
-            }
+            $this->assignAssociation($struct, $association, $structData);
         }
     }
 
@@ -1339,10 +1360,6 @@ class EntityReader implements EntityReaderInterface
         $referenceDefinition = $association->getReferenceDefinition();
         $collectionClass = $referenceDefinition->getCollectionClass();
 
-        if ($isPartialLoading) {
-            $collectionClass = EntityCollection::class;
-        }
-
         $fields = $referenceDefinition->getFields()->getBasicFields();
         $fields = $this->addAssociationFieldsToCriteria($associationCriteria, $referenceDefinition, $fields);
 
@@ -1378,15 +1395,13 @@ class EntityReader implements EntityReaderInterface
             if ($association->is(Extension::class)) {
                 $extension = $relatedCollection->get($item->getUniqueIdentifier());
                 if ($extension !== null) {
-                    $entity->addExtension($association->getPropertyName(), $extension);
+                    $this->assignAssociation($entity, $association, $extension);
                 }
 
                 continue;
             }
 
-            $entity->assign([
-                $association->getPropertyName() => $relatedCollection->get($item->getUniqueIdentifier()),
-            ]);
+            $this->assignAssociation($entity, $association, $relatedCollection->get($item->getUniqueIdentifier()));
         }
     }
 
