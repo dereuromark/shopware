@@ -9,5 +9,6 @@ describe('src/module/sw-cms/elements/product-name', () => {
         name: 'product-name',
         component: 'sw-cms-el-product-name',
         config: 'sw-cms-el-config-product-name',
+        preview: 'sw-cms-el-preview-product-name',
     });
 });

@@ -9,5 +9,6 @@ describe('src/module/sw-cms/elements/manufacturer-logo', () => {
         name: 'manufacturer-logo',
         component: 'sw-cms-el-manufacturer-logo',
         config: 'sw-cms-el-config-manufacturer-logo',
+        preview: 'sw-cms-el-preview-manufacturer-logo',
     });
 });
